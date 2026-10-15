@@ -40,6 +40,7 @@ type Run = {
   summary?: string; items: Item[];
   threads: { key: string; threadId: string; url: string; reused: boolean }[];
   error?: string; ackedAt?: string;
+  doneKeys?: string[];   // items marked done one at a time from the inbox
 };
 ```
 
@@ -74,11 +75,13 @@ Missed ticks while the Mac sleeps are skipped, not caught up.
 
 ## API (JSON)
 
-- `GET /api/routines`, `PUT /api/routines/:id` (upsert, validate at this boundary), `DELETE /api/routines/:id`
+- `GET /api/routines` (each with `lastRun: {id, state, startedAt, finishedAt} | null` and `nextRun: ISO | null`), `PUT /api/routines/:id` (upsert, validate at this boundary), `DELETE /api/routines/:id`
 - `POST /api/routines/:id/run` starts a manual run, returns the Run.
 - `GET /api/runs?routineId=&limit=50` newest first; `GET /api/runs/:id` includes `log` text.
-- `POST /api/runs/:id/ack`
-- `GET /api/inbox` returns `{ count, entries: [{ runId, routineName, state, summary, finishedAt, items: Item[] (needs_you and code only), threads }] }` for unacked runs in `needs_input` or `failed`, plus unacked `done` runs that have needs_you or code items. Newest first.
+- `POST /api/runs/:id/ack` acks the run. With body `{ key }` it marks one item done instead; the run is acked once no needs_you or code items remain open.
+- `GET /api/models` returns `{ agents: { claude, codex, custom }, t3: { claudeAgent, codex } }` model suggestions, from `~/.t3/userdata/model-manifest.json` `currentModels` when readable.
+- `GET /cron.mjs` serves `src/cron.mjs` so the dashboard parses schedules with the same code.
+- `GET /api/inbox` returns `{ count, entries: [{ runId, routineName, state, summary, finishedAt, items: Item[] (needs_you and code only, minus doneKeys), threads }] }` for unacked runs in `needs_input` or `failed`, plus unacked `done` runs that have needs_you or code items. Newest first.
 - `GET /api/cron/preview?expr=` returns `{ valid, description, next: string[5] }` or `{ valid: false, error }`.
 
 ## UI

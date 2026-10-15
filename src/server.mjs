@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as store from "./store.mjs";
 import { parseCron, matches, nextRuns, describe } from "./cron.mjs";
 import { AGENTS, startRun, isRunning, failInterrupted } from "./runner.mjs";
@@ -7,6 +9,10 @@ import { seeds } from "./seeds.mjs";
 
 const PORT = Number(process.env.ROUTINEBAR_PORT || 4141);
 const INDEX = new URL("../public/index.html", import.meta.url);
+// The dashboard imports the same cron module in the browser so the schedule builder and the server agree.
+const CRON_MODULE = new URL("./cron.mjs", import.meta.url);
+const MANIFEST = join(homedir(), ".t3", "userdata", "model-manifest.json");
+const FALLBACK_MODELS = { claudeAgent: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], codex: ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"] };
 const PROVIDERS = ["claudeAgent", "codex"];
 const RUNTIME_MODES = ["approval-required", "auto-accept-edits", "full-access"];
 
@@ -41,7 +47,11 @@ function validateRoutine(id, b) {
     id,
     name: str("name"),
     enabled: b.enabled,
-    schedule: b.schedule.trim(),
+    schedule: b.schedule
+      .split(";")
+      .map((e) => e.trim().split(/\s+/).join(" "))
+      .filter(Boolean)
+      .join("; "),
     agent,
     model: str("model"),
     ...(agent === "custom" && { command: str("command") }),
@@ -64,15 +74,41 @@ function cronPreview(expr) {
   }
 }
 
+// Items the inbox shows for a run: needs_you and code, minus the ones marked done one by one.
+const openItems = (run) => run.items.filter((i) => i.kind !== "fyi" && !run.doneKeys?.includes(i.key));
+
+function models() {
+  let current = {};
+  try {
+    current = JSON.parse(readFileSync(MANIFEST, "utf8")).manifest.currentModels;
+  } catch {}
+  const t3 = Object.fromEntries(PROVIDERS.map((p) => [p, current[p]?.length ? current[p] : FALLBACK_MODELS[p]]));
+  return { agents: { claude: ["opus", "sonnet", "haiku", ...t3.claudeAgent], codex: t3.codex, custom: [] }, t3 };
+}
+
+function routinesWithStatus() {
+  const runs = store.runs();
+  const now = new Date();
+  return store.routines().map((r) => {
+    const last = runs.find((x) => x.routineId === r.id);
+    let nextRun = null;
+    try {
+      if (r.enabled) nextRun = nextRuns(parseCron(r.schedule), now, 1)[0]?.toISOString() ?? null;
+    } catch {}
+    return { ...r, lastRun: last ? { id: last.id, state: last.state, startedAt: last.startedAt, finishedAt: last.finishedAt ?? null } : null, nextRun };
+  });
+}
+
 function inbox() {
   const routineNames = Object.fromEntries(store.routines().map((r) => [r.id, r.name]));
   const entries = store
     .runs()
     .filter((r) => !r.ackedAt)
-    .map((r) => ({ run: r, items: r.items.filter((i) => i.kind !== "fyi") }))
+    .map((r) => ({ run: r, items: openItems(r) }))
     .filter(({ run, items }) => run.state === "needs_input" || run.state === "failed" || (run.state === "done" && items.length))
     .map(({ run, items }) => ({
       runId: run.id,
+      routineId: run.routineId,
       routineName: routineNames[run.routineId] ?? run.routineId,
       state: run.state,
       summary: run.summary ?? run.error,
@@ -90,7 +126,8 @@ function mustRoutine(id) {
 }
 
 const routes = [
-  ["GET", /^\/api\/routines$/, () => store.routines()],
+  ["GET", /^\/api\/routines$/, () => routinesWithStatus()],
+  ["GET", /^\/api\/models$/, () => models()],
   ["PUT", /^\/api\/routines\/([^/]+)$/, ([id], body) => (store.upsertRoutine(validateRoutine(id, body)), store.routine(id))],
   ["DELETE", /^\/api\/routines\/([^/]+)$/, ([id]) => (store.deleteRoutine(id), { ok: true })],
   [
@@ -125,10 +162,15 @@ const routes = [
   [
     "POST",
     /^\/api\/runs\/([^/]+)\/ack$/,
-    ([id]) => {
+    ([id], body) => {
       const run = store.run(id);
       if (!run) throw new HttpError(404, "no such run");
-      run.ackedAt ??= new Date().toISOString();
+      const key = body?.key;
+      if (key !== undefined) {
+        if (!run.items.some((i) => i.key === key)) throw new HttpError(400, "no such item in this run");
+        run.doneKeys = [...new Set([...(run.doneKeys ?? []), key])];
+      }
+      if (key === undefined || (run.state !== "failed" && !openItems(run).length)) run.ackedAt ??= new Date().toISOString();
       store.saveRun(run);
       return run;
     },
@@ -156,6 +198,7 @@ const server = createServer(async (req, res) => {
   };
   try {
     if (req.method === "GET" && url.pathname === "/") return send(200, readFileSync(INDEX), "text/html; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/cron.mjs") return send(200, readFileSync(CRON_MODULE), "text/javascript; charset=utf-8");
     for (const [method, re, handler] of routes) {
       const m = re.exec(url.pathname);
       if (m && req.method === method) return send(200, await handler(m.slice(1).map(decodeURIComponent), await readBody(req), url.searchParams));
