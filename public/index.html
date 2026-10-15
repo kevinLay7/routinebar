@@ -22,6 +22,7 @@
     --shadow-bar: 0 -1px 0 var(--line), 0 -8px 24px rgba(0, 0, 0, 0.06);
   }
   @media (prefers-color-scheme: dark) {
+    dialog.sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
     :root {
       --bg: #161618; --surface: #1f1f22; --surface-2: #28282c; --text: #f2f2f4; --muted: #a1a1a6; --subtle: #7c7c82;
       --line: #2f2f33; --line-strong: #3d3d42;
@@ -197,6 +198,25 @@
   .toast { position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 500; z-index: 9; }
   .toast:empty { display: none; }
 
+  /* Import sheet: native dialog, bordered like a list container, dimmed page behind */
+  dialog.sheet { width: min(760px, calc(100vw - 48px)); max-height: calc(100vh - 96px); margin: 48px auto auto; padding: 0; border: 1px solid var(--line); border-radius: var(--r-group); background: var(--bg); color: var(--text); overflow: hidden; }
+  dialog.sheet[open] { display: flex; flex-direction: column; }
+  dialog.sheet::backdrop { background: rgba(0, 0, 0, 0.28); }
+  .sheet-head { padding: var(--s4) var(--s5); border-bottom: 1px solid var(--line); background: var(--surface); }
+  .sheet-head h2 { font-size: var(--t-md); font-weight: 600; }
+  .sheet-head p { margin: 2px 0 0; color: var(--muted); }
+  .sheet-body { flex: 1; overflow: auto; padding: var(--s5) var(--s5) 0; }
+  .sheet-foot { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s5); border-top: 1px solid var(--line); background: var(--surface); }
+  .sheet-foot .status { flex: 1; color: var(--muted); }
+  .row > input[type=checkbox] { flex: none; width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--accent); }
+  label.row-title { display: block; cursor: pointer; }
+  .sched { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--s3); margin: var(--s2) 0 0; }
+  .sched dt { color: var(--muted); }
+  .sched dd { margin: 0; overflow-wrap: anywhere; }
+  .notes { list-style: none; margin: var(--s2) 0 0; padding: 0; color: var(--muted); font-size: var(--t-xs); display: grid; gap: 2px; }
+  .row details.disclosure { margin-top: var(--s2); }
+  .row pre.log { max-height: 240px; }
+
   @media (max-width: 960px) {
     .sect { grid-template-columns: 1fr; gap: var(--s4); }
   }
@@ -216,6 +236,11 @@
 </header>
 <main id="view"></main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<dialog class="sheet" id="importSheet" aria-labelledby="impTitle">
+  <div class="sheet-head"><h2 id="impTitle">Import routines</h2><p>From Claude and Codex on this Mac. Imported routines start off, and nothing changes at the source.</p></div>
+  <div class="sheet-body" id="impBody"></div>
+  <div class="sheet-foot"><span class="status" id="impStatus"></span><button type="button" class="btn quiet" id="impCancel">Cancel</button><button type="button" class="btn primary" id="impGo" disabled>Import 0 routines</button></div>
+</dialog>
 <script type="module">
 import { parseCron, matches, describe } from "/cron.mjs";
 
@@ -500,18 +525,19 @@ views.routines = async (el, id) => {
   const list = (await api("/api/routines")).sort((a, b) => b.enabled - a.enabled || a.name.localeCompare(b.name));
   const on = list.filter((r) => r.enabled).length;
   el.innerHTML = `
-    <div class="page-head"><div class="grow"><h1 class="headline">Routines</h1><p class="sub">${list.length} ${list.length === 1 ? "routine" : "routines"}, ${on} on</p></div><a class="btn primary" href="#routines/new">New routine</a></div>
+    <div class="page-head"><div class="grow"><h1 class="headline">Routines</h1><p class="sub">${list.length} ${list.length === 1 ? "routine" : "routines"}, ${on} on</p></div><button type="button" class="btn" id="importBtn">Import</button><a class="btn primary" href="#routines/new">New routine</a></div>
     <div class="table-wrap"><table>
       <thead><tr><th style="width:56px"><span class="sr">On</span></th><th>Routine</th><th>Schedule</th><th class="hide-narrow">Last run</th><th class="nowrap">Next</th><th class="right"><span class="sr">Actions</span></th></tr></thead>
       <tbody>${list.map((r) => `<tr class="link${r.enabled ? "" : " off"}" data-id="${esc(r.id)}">
         <td><button class="switch" role="switch" aria-checked="${r.enabled}" aria-label="${r.enabled ? "Turn off" : "Turn on"} ${esc(r.name)}"></button></td>
-        <td class="name"><a href="#routines/${esc(r.id)}">${esc(r.name)}</a><div class="muted">${{ claude: "Claude Code", codex: "Codex", custom: "Shell command" }[r.agent]} · <span class="mono">${esc(r.model)}</span></div></td>
-        <td>${esc(scheduleText(r.schedule))}</td>
+        <td class="name"><a href="#routines/${esc(r.id)}">${esc(r.name)}</a><div class="muted">${AGENT_LABEL[r.agent]} · <span class="mono">${esc(r.model)}</span>${r.importedFrom ? ` · From ${esc(SOURCE_LABEL[r.importedFrom.source] ?? r.importedFrom.source)}` : ""}</div></td>
+        <td>${r.importedFrom?.needsSchedule ? NEEDS_SCHEDULE : esc(scheduleText(r.schedule))}</td>
         <td class="hide-narrow nowrap">${r.lastRun ? `<a href="#runs/${esc(r.lastRun.id)}" class="state quiet ${r.lastRun.state}" title="${esc(STATE[r.lastRun.state])}">${timeEl(r.lastRun.finishedAt ?? r.lastRun.startedAt)}</a>` : `<span class="subtle">Never</span>`}</td>
         <td class="nowrap">${r.nextRun ? timeEl(r.nextRun) : `<span class="subtle">Off</span>`}</td>
         <td class="right"><button class="btn" data-run>Run now</button></td>
       </tr>`).join("")}</tbody>
     </table></div>`;
+  $("#importBtn", el).onclick = openImport;
   for (const tr of $$("tbody tr", el)) {
     const r = list.find((x) => x.id === tr.dataset.id);
     tr.onclick = (ev) => { if (!ev.target.closest("a, button")) location.hash = `#routines/${r.id}`; };
@@ -524,6 +550,81 @@ views.routines = async (el, id) => {
     };
   }
 };
+
+/* Import */
+const SOURCES = [["claude-cloud", "Claude cloud"], ["claude-desktop", "Claude desktop"], ["codex", "Codex"]];
+const SOURCE_LABEL = Object.fromEntries(SOURCES);
+const NEEDS_SCHEDULE = `<span class="state needs_input pill">Needs a schedule</span>`;
+let importGen = 0;
+
+function candidateRow(c, i) {
+  const id = `imp-${i}`;
+  return `<li class="row${c.imported ? " is-done" : ""}">
+    <input type="checkbox" id="${id}" data-source="${esc(c.source)}" data-source-id="${esc(c.sourceId)}" ${c.imported ? "disabled" : "checked"}>
+    <div class="row-main">
+      <label class="row-title" for="${id}">${esc(c.name)}</label>
+      <div class="row-meta"><span>${AGENT_LABEL[c.agent] ?? esc(c.agent)}</span><span class="mono">${esc(c.model)}</span>${c.imported ? "<span>Already imported</span>" : ""}</div>
+      <dl class="sched"><dt>Their schedule</dt>${c.sourceSchedule ? `<dd class="mono">${esc(c.sourceSchedule)}</dd>` : `<dd class="subtle">Not stored</dd>`}<dt>Here</dt><dd>${c.schedule ? esc(scheduleText(c.schedule)) : NEEDS_SCHEDULE}</dd></dl>
+      ${c.notes.length ? `<ul class="notes">${c.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+      <details class="disclosure"><summary>Prompt</summary><pre class="log">${esc(c.prompt) || "(empty)"}</pre></details>
+    </div>
+  </li>`;
+}
+
+function sourceGroup(id, label, result) {
+  let rows;
+  if (!result) rows = `<li class="row"><span class="state running">Checking ${esc(label)}</span></li>`;
+  else if (!result.ok) rows = `<li class="row"><div class="row-main"><span class="state failed">Couldn't read ${esc(label)}</span><div class="row-note">${esc(result.error)}</div></div></li>`;
+  else if (!result.candidates.length) rows = `<li class="row"><span class="muted">Nothing found</span></li>`;
+  else rows = result.candidates.map((c, i) => candidateRow(c, `${id}-${i}`)).join("");
+  return `<section class="group"><h3 class="group-head caps">${esc(label)}</h3><ul class="list">${rows}</ul></section>`;
+}
+
+function openImport() {
+  const sheet = $("#importSheet"), body = $("#impBody"), go = $("#impGo");
+  const gen = ++importGen;
+  const results = {};
+  const sync = () => {
+    const n = $$("input[type=checkbox]:checked:not(:disabled)", body).length;
+    go.textContent = `Import ${n} ${n === 1 ? "routine" : "routines"}`;
+    go.disabled = !n;
+  };
+  const paint = () => {
+    const keep = new Set($$("input[type=checkbox]", body).filter((c) => !c.checked).map((c) => `${c.dataset.source}\n${c.dataset.sourceId}`));
+    const all = SOURCES.map(([id]) => results[id]);
+    const empty = all.every((r) => r?.ok && !r.candidates.length);
+    body.innerHTML = empty
+      ? `<div class="empty"><h3 class="headline">Nothing to import</h3><p class="sub">No routines found in Claude cloud, Claude desktop, or Codex.</p></div>`
+      : SOURCES.map(([id, label]) => sourceGroup(id, label, results[id])).join("");
+    for (const c of $$("input[type=checkbox]", body)) if (keep.has(`${c.dataset.source}\n${c.dataset.sourceId}`)) c.checked = false;
+    $("#impStatus").textContent = all.every(Boolean) ? "" : "Looking for routines…";
+    sync();
+  };
+  body.onchange = sync;
+  $("#impCancel").onclick = () => sheet.close();
+  go.onclick = async () => {
+    const items = $$("input[type=checkbox]:checked:not(:disabled)", body).map((c) => ({ source: c.dataset.source, sourceId: c.dataset.sourceId }));
+    go.disabled = true;
+    $("#impStatus").textContent = "Importing…";
+    try {
+      const created = await post("/api/import", { items });
+      sheet.close();
+      toast(created.length ? `Imported ${created.length} ${created.length === 1 ? "routine" : "routines"}` : "Nothing new to import");
+      render();
+    } catch (e) {
+      $("#impStatus").textContent = e.message;
+      sync();
+    }
+  };
+  paint();
+  sheet.showModal();
+  for (const [id, label] of SOURCES) {
+    api(`/api/import?source=${id}`)
+      .then((r) => r.sources[0])
+      .catch((e) => ({ id, label, ok: false, error: e.message }))
+      .then((r) => { if (gen === importGen) { results[id] = r; paint(); } });
+  }
+}
 
 /* Runs */
 views.runs = async (el, id) => {
@@ -582,6 +683,7 @@ async function runDetail(el, id) {
 
 /* Editor */
 const AGENTS = [["claude", "Claude Code"], ["codex", "Codex"], ["custom", "Shell command"]];
+const AGENT_LABEL = Object.fromEntries(AGENTS);
 const PROVIDERS = [["claudeAgent", "Claude"], ["codex", "Codex"]];
 const MODES = [
   ["approval-required", "Ask before changes", "The thread proposes each edit and command and waits for you to approve it."],
@@ -624,6 +726,7 @@ async function editor(el, id) {
   if (id && !existing) throw new Error("No such routine.");
   const r = existing ?? { name: "", enabled: false, schedule: "0 9 * * 1-5", agent: "claude", model: "opus", cwd: "", prompt: "", t3: { provider: "claudeAgent", model: models.t3.claudeAgent[0], runtimeMode: "approval-required" } };
   let sched = fromCron(r.schedule) ?? { mode: "custom" };
+  const needsSchedule = !!r.importedFrom?.needsSchedule;
 
   el.innerHTML = `<form id="ed" novalidate>
     <div class="page-head"><div class="grow"><a class="back" href="#routines">← Routines</a><h1 class="headline">${existing ? esc(r.name) : "New routine"}</h1>${existing ? `<p class="sub mono">${esc(r.id)}</p>` : ""}</div>
@@ -638,6 +741,7 @@ async function editor(el, id) {
     </div></section>
 
     <section class="sect"><div class="sect-head"><h2>Schedule</h2><p>Local time. Runs missed while the Mac sleeps are skipped.</p></div><div class="sect-body">
+      ${needsSchedule ? `<p class="inline" style="margin:0">${NEEDS_SCHEDULE}<span class="muted">${esc(SOURCE_LABEL[r.importedFrom.source] ?? r.importedFrom.source)} did not say when this runs. Pick a schedule and save.</span></p>` : ""}
       <div class="seg" role="radiogroup" aria-label="Schedule type" id="modes"><label><input type="radio" name="mode" value="times"><span>At set times</span></label><label><input type="radio" name="mode" value="interval"><span>On an interval</span></label></div>
       <div id="builder" class="sect-body"></div>
       <div class="preview" aria-live="polite"><div class="sentence" id="sentence"></div><div class="week" id="week"></div></div>
@@ -751,14 +855,16 @@ async function editor(el, id) {
     name: v("#name").trim(), enabled: enabledBtn.getAttribute("aria-checked") === "true", schedule: v("#cron"), agent: radio("agent"), model: v("#model").trim(),
     ...(radio("agent") === "custom" && { command: v("#command") }), cwd: v("#cwd").trim(), prompt: v("#prompt"),
     t3: { provider: radio("provider"), model: v("#t3model").trim(), runtimeMode: radio("runtimeMode") },
+    // Saving from the editor confirms the schedule, so needsSchedule is dropped here.
+    ...(r.importedFrom && { importedFrom: { source: r.importedFrom.source, sourceId: r.importedFrom.sourceId } }),
   });
   const initial = JSON.stringify(body());
   const status = $("#saveStatus", form);
   function changed(err) {
     dirty = JSON.stringify(body()) !== initial;
     status.className = "status" + (dirty ? " dirty" : "");
-    status.innerHTML = err ? `<span class="err">${esc(err)}</span>` : dirty ? "Unsaved changes" : existing ? "No changes" : "";
-    $("#save", form).disabled = !!existing && !dirty;
+    status.innerHTML = err ? `<span class="err">${esc(err)}</span>` : dirty ? "Unsaved changes" : needsSchedule ? "Save to confirm the schedule" : existing ? "No changes" : "";
+    $("#save", form).disabled = !!existing && !dirty && !needsSchedule;
   }
   form.addEventListener("input", (ev) => { if (!ev.target.closest("#builder, #cron")) changed(); });
   form.addEventListener("change", (ev) => {

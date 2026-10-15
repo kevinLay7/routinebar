@@ -147,7 +147,7 @@ function claudeDesktop() {
         name: front.name || id,
         prompt: (m ? m[2] : text).trim(),
         schedule: null,
-        sourceSchedule: "Not stored in the task file",
+        sourceSchedule: "",
         agent: "claude",
         model: "opus",
         cwd: PROJECTS,

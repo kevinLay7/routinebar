@@ -101,7 +101,7 @@ Single `public/index.html` (vanilla JS + CSS, no build). It imports `/cron.mjs`,
 
 ## Import
 
-`src/importers.mjs` is a registry of sources `{ id, label, list() }`, each returning Candidates `{ source, sourceId, name, prompt, schedule: string | null, sourceSchedule, agent, model, cwd, notes: string[] }`. A failing source returns `{ ok: false, error }` and the others still show. Sources are only read, never changed.
+`src/importers.mjs` is a registry of sources `{ id, label, list() }`, each returning Candidates `{ source, sourceId, name, prompt, schedule: string | null, sourceSchedule (empty when the source stores none), agent, model, cwd, notes: string[] }`. A failing source returns `{ ok: false, error }` and the others still show. Sources are only read, never changed.
 - `claude-cloud`: `GET https://api.anthropic.com/v1/code/triggers` (beta `ccr-triggers-2026-01-30`) with the Claude Code OAuth token from the keychain. The UTC cron moves to local time at the current offset when minute and hour are plain numbers or lists (several expressions when only some hours cross midnight); otherwise it stays UTC with a note. cwd is a clone under ~/Projects named like the repo, else ~/Projects.
 - `claude-desktop`: `~/.claude/scheduled-tasks/*/SKILL.md`; no schedule is stored there.
 - `codex`: `~/.codex/automations/*/automation.toml`; `rrule` converts to cron for MINUTELY, HOURLY, DAILY and WEEKLY with INTERVAL, BYDAY, BYHOUR, BYMINUTE.

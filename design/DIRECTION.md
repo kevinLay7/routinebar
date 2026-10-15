@@ -54,6 +54,8 @@ Gap: no screenshots were inspected, so layout specifics below come from the docu
 | Schedule builder with "At set times" and "On an interval", day chips, times list, live sentence, 7-day strip, raw cron under Advanced | User plan; craft-details forms | Chips use accent only when selected | Most schedules are weekday times or work-hour intervals; cron stays reachable |
 | Plain names for T3 permissions: Ask before changes, Auto-accept edits, Full access | User plan | Segmented control | Users decide risk, not enum strings |
 | Model as text input with per-agent suggestions from the T3 manifest | User plan; native datalist | Free text still allowed | New model ids work without a release |
+| Import is a native `<dialog>` sheet over a dimmed page: header, scrolling body grouped by source (caps label, one list per source), footer with Cancel and the primary verb | macOS sheets; inbox grouping | No shadow; the backdrop and a 1px line separate it | Bringing routines in is a one-time, review-then-confirm step that should not leave the Routines page |
+| "Needs a schedule" uses the amber needs-you pill, in the import sheet, the routines table, and the editor's Schedule section | Status role rules | Amber still means "you must act" | An imported routine without a known schedule is the one thing the user has to fix before turning it on |
 | Light default, dark through prefers-color-scheme | anti-ai-slop #3; color.md | Separate dark neutral scale | Matches the system the menu bar app lives in |
 | Relative times ("12 min ago", "in 2 h") updated every 30 s, inbox polled every 15 s and only re-rendered when data changes | User plan; craft-details layout shift | Tabular numerals | No jumping rows while reading |
 
