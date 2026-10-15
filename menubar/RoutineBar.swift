@@ -40,12 +40,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         menu.delegate = self
-        item.menu = menu
         item.button?.imagePosition = .imageLeading
+        item.button?.target = self
+        item.button?.action = #selector(showMenu)
         render(.loaded(Inbox(count: 0, entries: [])))
         refresh()
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             Task { @MainActor in self.refresh() }
+        }
+    }
+
+    // Menu bar managers like Thaw park hidden items off screen and forward clicks to them,
+    // so anchoring to the button would pin the menu to a screen corner.
+    @objc func showMenu() {
+        let frame = item.button?.window?.frame ?? .zero
+        FileHandle.standardError.write("showMenu frame=\(frame) screens=\(NSScreen.screens.map(\.frame)) mouse=\(NSEvent.mouseLocation)\n".data(using: .utf8)!)
+        if NSScreen.screens.contains(where: { $0.frame.contains(frame) }) {
+            item.menu = menu
+            item.button?.performClick(nil)
+            item.menu = nil
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         }
     }
 
