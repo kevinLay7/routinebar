@@ -40,12 +40,12 @@ test("a newer failed run shows alongside the latest success", () => {
   assert.deepEqual(titles(inboxRuns(runs, { "pr-reviews:failed": "2026-10-15T10:05" })), [["2026-10-15T10:00", "done", ["Review PR 512"]]]);
 });
 
-test("a dismissed item stays hidden until its note changes", () => {
+test("a dismissed item stays hidden through rewording until its kind changes", () => {
   const dismissed = { "my-pr-monitoring:pr:acme/store#512": fingerprint({ kind: "needs_you", note: "Chris left a blocking comment" }) };
-  const same = [run("2026-10-15T10:05", "my-pr-monitoring", "needs_input", [prItem("Reworded title", "Chris left a blocking comment")])];
-  const changed = [run("2026-10-15T10:10", "my-pr-monitoring", "needs_input", [prItem("Reworded title", "Chris replied again")])];
-  assert.deepEqual(titles(inboxRuns(same, dismissed)), []);
-  assert.deepEqual(titles(inboxRuns(changed, dismissed)), [["2026-10-15T10:10", "needs_input", ["Reworded title"]]]);
+  const reworded = [run("2026-10-15T10:05", "my-pr-monitoring", "needs_input", [prItem("Reworded title", "Chris replied again")])];
+  const nowCode = [run("2026-10-15T10:10", "my-pr-monitoring", "needs_input", [{ ...prItem("Reworded title", "Fix requested"), kind: "code" }])];
+  assert.deepEqual(titles(inboxRuns(reworded, dismissed)), []);
+  assert.deepEqual(titles(inboxRuns(nowCode, dismissed)), [["2026-10-15T10:10", "needs_input", ["Reworded title"]]]);
 });
 
 test("running runs never supersede the latest finished run", () => {

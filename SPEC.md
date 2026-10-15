@@ -8,7 +8,7 @@ Local scheduler for agent routines on macOS. Node 24, zero npm dependencies. One
 - `runs/<runId>.json`: one file per Run. Only the server process writes it.
 - `logs/<runId>.log` and `logs/<runId>.err`: the agent's stdout and stderr. `runs/<runId>.exit` holds its exit code; `runs/<runId>.out` is codex's final message.
 - `seen.json`: `{ [routineId + ":" + canonicalKey(item)]: { threadId, url, createdAt } }`. Dedupes T3 threads across runs.
-- `dismissed.json`: `{ [routineId + ":" + canonicalKey(item)]: fingerprint }` for items marked done, where fingerprint hashes the item's kind and note, so an item comes back only when the agent reports something new about it. Run-level rows use `routineId:failed` and `routineId:run` with the run id as the value.
+- `dismissed.json`: `{ [routineId + ":" + canonicalKey(item)]: fingerprint }` for items marked done, where fingerprint hashes the item's kind, so an item stays done through rewording and comes back only when its kind changes (for example a review request becoming a code item). Run-level rows use `routineId:failed` and `routineId:run` with the run id as the value.
 
 `canonicalKey(item)` (`src/inbox.mjs`) is the one item identity: `pr:owner/repo#n` (lowercased) from a GitHub PR url or a `pr:` key, else `jira:KEY` from a Jira key in the key or url, else the agent's key. The runner stores items under it and drops later duplicates within a run.
 

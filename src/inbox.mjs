@@ -8,7 +8,7 @@ export function canonicalKey({ key, url = "" }) {
   return jira ? `jira:${jira[1]}` : key;
 }
 
-export const fingerprint = (item) => createHash("sha1").update(`${item.kind}\n${item.note ?? ""}`).digest("hex").slice(0, 12);
+export const fingerprint = (item) => createHash("sha1").update(item.kind).digest("hex").slice(0, 12);
 export const itemId = (routineId, item) => `${routineId}:${canonicalKey(item)}`;
 export const isDismissed = (dismissed, routineId, item) => dismissed[itemId(routineId, item)] === fingerprint(item);
 // Run-level rows (a failed run, a needs_input run without items) are dismissed by run id under these keys.
