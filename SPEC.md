@@ -86,10 +86,11 @@ Missed ticks while the Mac sleeps are skipped, not caught up.
 
 ## UI
 
-Single `public/index.html` (vanilla JS + CSS, no build). Three tabs:
-- **Inbox**: the summary of what needs the user. Each entry shows routine, summary, items with links, T3 thread links, an Ack button.
-- **Routines**: list with enabled toggle, next run, Run now, edit. Editor form covers every Routine field. The cron builder has presets (every N minutes, hourly at :MM, daily at HH:MM, weekdays at HH:MM, weekly on chosen days at HH:MM) that write the cron string, a raw cron text field, and a live preview from `/api/cron/preview` (plain-English description and next 5 runs).
-- **Runs**: table of runs with state badges, filter by routine, click for detail with summary, items and log.
+Single `public/index.html` (vanilla JS + CSS, no build). It imports `/cron.mjs`, so the browser parses schedules with the server's code. Design direction and decisions: `design/DIRECTION.md`.
+- **Inbox** (home): a sentence with the count and a breakdown, then rows grouped as Needs your review, Started in T3, and Failed runs (collapsed). Each row has one primary action (open the PR or link, open the T3 thread, or view the run) and Done, which marks that item done. J/K move, O opens, D marks done. Polls every 15 s and re-renders only when the data changed.
+- **Routines**: table with on/off switch, name, plain-English schedule, last run state and time, next run, Run now. A row opens the editor.
+- **Editor**: Basics, Schedule, Instructions, When code is needed (T3 provider, model, permissions), with a sticky save bar and an unsaved-changes guard. The id is derived from the name on create and fixed after. The schedule builder covers "at set times" (days and several times) and "on an interval" (every N minutes or hours, optional hours window, days), shows a sentence and the next 7 days, and keeps the raw cron under Advanced. Times with different minutes save as several expressions joined by "; ".
+- **Runs**: table of runs with state, filter by routine; detail shows state, start, duration, trigger, summary, items, threads, and the raw log behind a disclosure.
 
 ## Cron
 

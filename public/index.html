@@ -3,51 +3,225 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>RoutineBar</title>
 <style>
-  :root { color-scheme: light dark; --bg: #fafafa; --fg: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --card: #fff; --accent: #0a66d8; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --fg: #f5f5f7; --muted: #98989d; --line: #3a3a3c; --card: #2c2c2e; --accent: #4c9cff; } }
+  :root {
+    color-scheme: light dark;
+    --font: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --t-xs: 12px; --t-sm: 13px; --t-md: 15px; --t-lg: 22px;
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+    --r-control: 6px; --r-group: 10px;
+
+    --bg: #f6f6f7; --surface: #fff; --surface-2: #f0f0f2; --text: #1c1c1e; --muted: #6b6b70; --subtle: #8e8e93;
+    --line: #e3e3e6; --line-strong: #d1d1d6;
+    --accent: #0a64d8; --accent-hover: #0855b8; --accent-tint: #e8f0fc; --on-accent: #fff;
+    --needs: #a35f00; --needs-bg: #fdf1dc; --failed: #c4271c; --failed-bg: #fde9e7;
+    --done: #1e7d3a; --done-bg: #e3f4e7; --running: #6b6b70; --running-bg: #ececef;
+    --shadow-bar: 0 -1px 0 var(--line), 0 -8px 24px rgba(0, 0, 0, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618; --surface: #1f1f22; --surface-2: #28282c; --text: #f2f2f4; --muted: #a1a1a6; --subtle: #7c7c82;
+      --line: #2f2f33; --line-strong: #3d3d42;
+      --accent: #3d8bfd; --accent-hover: #5c9dfd; --accent-tint: rgba(61, 139, 253, 0.16); --on-accent: #0b0b0c;
+      --needs: #f0b44c; --needs-bg: rgba(240, 180, 76, 0.14); --failed: #ff6b5f; --failed-bg: rgba(255, 107, 95, 0.14);
+      --done: #5fcf7e; --done-bg: rgba(95, 207, 126, 0.13); --running: #a1a1a6; --running-bg: rgba(255, 255, 255, 0.08);
+      --shadow-bar: 0 -1px 0 var(--line), 0 -8px 24px rgba(0, 0, 0, 0.4);
+    }
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--fg); }
-  header { display: flex; align-items: center; gap: 24px; padding: 12px 24px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 16px; margin: 0; }
-  nav a { color: var(--muted); text-decoration: none; margin-right: 16px; padding: 4px 0; }
-  nav a.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
-  main { max-width: 980px; margin: 0 auto; padding: 24px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
-  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .grow { flex: 1; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; font: var(--t-sm)/1.45 var(--font); background: var(--bg); color: var(--text); font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-control); }
+  h1, h2, h3 { margin: 0; text-wrap: balance; }
+  code, .mono { font-family: var(--mono); font-size: var(--t-xs); }
   .muted { color: var(--muted); }
-  a { color: var(--accent); }
-  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  input, select, textarea { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
-  textarea { width: 100%; min-height: 140px; font-family: ui-monospace, monospace; font-size: 12px; }
-  label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 12px; }
-  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
-  .running { background: #dbeafe; color: #1e40af; } .done { background: #dcfce7; color: #166534; }
-  .needs_input { background: #fef3c7; color: #92400e; } .failed { background: #fee2e2; color: #991b1b; }
+  .subtle { color: var(--subtle); }
+  .caps { font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  [hidden] { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* Header */
+  .top { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .top-in { max-width: 1040px; margin: 0 auto; padding: 0 var(--s5); height: 48px; display: flex; align-items: center; gap: var(--s5); }
+  .brand { font-weight: 600; font-size: var(--t-sm); }
+  .tabs { display: flex; gap: var(--s1); }
+  .tabs a { color: var(--muted); padding: 6px 10px; border-radius: var(--r-control); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+  .tabs a:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
+  .tabs a[aria-current="page"] { color: var(--text); background: var(--surface-2); }
+  .count { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--text); color: var(--bg); font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; }
+  .count:empty { display: none; }
+  main { max-width: 1040px; margin: 0 auto; padding: var(--s6) var(--s5) 96px; }
+
+  /* Buttons and controls */
+  button { font: inherit; color: inherit; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: var(--r-control); border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font-weight: 500; letter-spacing: 0.01em; cursor: pointer; white-space: nowrap; text-decoration: none; }
+  .btn:hover { background: var(--surface-2); text-decoration: none; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+  .btn.quiet:hover { background: var(--surface-2); color: var(--text); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn.danger-text { border-color: transparent; background: transparent; color: var(--failed); padding: 0; }
+  .kbd { font: 500 11px var(--font); color: var(--subtle); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  input[type=text], input[type=time], input:not([type]), select, textarea {
+    font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-control); height: 30px; padding: 0 10px;
+  }
+  textarea { height: auto; padding: 10px 12px; width: 100%; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; resize: vertical; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+  input.wide { width: 100%; }
+  input.mono-in { font-family: var(--mono); font-size: 12.5px; }
+
+  /* Segmented control and chips: native radios and checkboxes, restyled */
+  .seg { justify-self: start; display: inline-flex; padding: 2px; gap: 2px; background: var(--surface-2); border-radius: 8px; border: 1px solid var(--line); flex-wrap: wrap; }
+  .seg label, .chips label { position: relative; cursor: pointer; }
+  .seg input, .chips input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .seg span { display: block; padding: 4px 12px; border-radius: 6px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+  .seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line-strong); }
+  .seg input:focus-visible + span, .chips input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chips { justify-self: start; display: inline-flex; gap: 4px; flex-wrap: wrap; }
+  .chips span { display: grid; place-items: center; min-width: 44px; height: 30px; padding: 0 8px; border-radius: var(--r-control); border: 1px solid var(--line-strong); font-weight: 500; color: var(--muted); background: var(--surface); }
+  .chips input:checked + span { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
+
+  .switch { position: relative; width: 32px; height: 20px; border-radius: 10px; border: 0; padding: 0; background: var(--line-strong); cursor: pointer; flex: none; transition: background-color 0.15s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.15s; }
+  .switch[aria-checked="true"] { background: var(--accent); }
+  .switch[aria-checked="true"]::after { transform: translateX(12px); }
+
+  /* Status: the only place status colors appear */
+  .state { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; white-space: nowrap; }
+  .state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .state.needs_input { color: var(--needs); } .state.failed { color: var(--failed); } .state.done { color: var(--done); } .state.running { color: var(--running); }
+  .state.quiet { color: var(--text); }
+  .state.quiet.needs_input::before { background: var(--needs); } .state.quiet.failed::before { background: var(--failed); }
+  .state.quiet.done::before { background: var(--done); } .state.quiet.running::before { background: var(--running); }
+  .state.running::before { animation: pulse 1.2s ease-in-out infinite; }
+  .pill { padding: 2px 8px 2px 7px; border-radius: 999px; font-size: var(--t-xs); }
+  .pill.needs_input { background: var(--needs-bg); } .pill.failed { background: var(--failed-bg); } .pill.done { background: var(--done-bg); } .pill.running { background: var(--running-bg); }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { .state.running::before { animation: none; } .switch, .switch::after { transition: none; } }
+
+  /* Page heads */
+  .page-head { display: flex; align-items: center; gap: var(--s4); margin-bottom: var(--s5); }
+  .page-head .grow { flex: 1; min-width: 0; }
+  .headline { font-size: var(--t-lg); font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+  .sub { margin-top: 6px; color: var(--muted); font-size: var(--t-sm); }
+
+  /* Grouped lists (inbox, run items) */
+  .group { margin-bottom: var(--s6); }
+  .group-head { display: flex; align-items: baseline; gap: var(--s2); margin: 0 0 var(--s2) 2px; }
+  .list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-group); overflow: hidden; }
+  .list > li + li { border-top: 1px solid var(--line); }
+  .row { display: flex; align-items: flex-start; gap: var(--s4); padding: var(--s3) var(--s4); }
+  .row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 0; background: var(--accent-tint); }
+  .row-main { flex: 1; min-width: 0; }
+  .row-title { font-size: var(--t-md); font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+  .row-note { margin-top: 2px; color: var(--text); opacity: 0.85; max-width: 72ch; text-wrap: pretty; }
+  .row-meta { margin-top: 4px; color: var(--muted); font-size: var(--t-xs); letter-spacing: 0.01em; display: flex; flex-wrap: wrap; gap: 0 6px; }
+  .row-meta > * + *::before { content: "·"; margin-right: 6px; color: var(--subtle); }
+  .row-meta a { color: var(--muted); }
+  /* The primary verb turns solid only on the row being worked, so a long inbox is not a wall of blue. */
+  .row .btn.primary:not(:hover) { background: var(--surface); color: var(--accent); border-color: var(--line-strong); }
+  .row:hover .btn.primary, .row:focus-within .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  .row-actions { display: flex; gap: var(--s2); align-items: center; flex: none; padding-top: 1px; }
+  details.group > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: var(--s2); margin: 0 0 var(--s2) 2px; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary::before { content: "▸"; color: var(--muted); font-size: 13px; width: 12px; }
+  details.group[open] > summary::before { content: "▾"; }
+  .empty { padding: var(--s7) 0; }
+  .empty .headline { margin-bottom: var(--s2); }
+  .hint { color: var(--subtle); font-size: var(--t-xs); margin-top: var(--s5); }
+
+  /* Tables */
+  .table-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-group); overflow: hidden; }
   table { width: 100%; border-collapse: collapse; }
-  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-  tr.click { cursor: pointer; } tr.click:hover { background: var(--card); }
-  pre { white-space: pre-wrap; font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; }
-  ul { margin: 6px 0; padding-left: 20px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
-  .error { color: #d70015; }
+  th { text-align: left; font-weight: 600; font-size: var(--t-xs); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 10px var(--s3); border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 10px var(--s3); border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr.link { cursor: pointer; }
+  tbody tr.link:hover { background: var(--surface-2); }
+  tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.name a { color: var(--text); font-weight: 500; }
+  td.name .muted { font-size: var(--t-xs); margin-top: 1px; }
+  td.nowrap, th.nowrap { white-space: nowrap; }
+  td.right, th.right { text-align: right; }
+  td.clip { max-width: 0; width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .off td:not(:first-child):not(:last-child) { opacity: 0.55; }
+
+  /* Run detail */
+  .back { display: inline-block; margin-bottom: var(--s4); color: var(--muted); }
+  .facts { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s6); margin: var(--s4) 0 var(--s5); }
+  .facts div { display: grid; gap: 2px; }
+  .summary { font-size: var(--t-md); line-height: 1.55; max-width: 72ch; margin: 0 0 var(--s5); text-wrap: pretty; }
+  .error-box { color: var(--failed); background: var(--failed-bg); border-radius: var(--r-control); padding: var(--s3) var(--s4); font-family: var(--mono); font-size: var(--t-xs); margin-bottom: var(--s5); }
+  .kind { flex: none; width: 76px; padding-top: 3px; }
+  pre.log { margin: var(--s2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-group); padding: var(--s4); max-height: 520px; overflow: auto; }
+  details.disclosure > summary { cursor: pointer; color: var(--muted); font-weight: 500; }
+  .is-done { opacity: 0.55; }
+
+  /* Editor */
+  .sect { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--s6); padding: var(--s6) 0; border-top: 1px solid var(--line); }
+  .sect:first-of-type { border-top: 0; padding-top: var(--s2); }
+  .sect-head h2 { font-size: var(--t-md); font-weight: 600; }
+  .sect-head p { margin: 6px 0 0; color: var(--muted); text-wrap: pretty; }
+  .sect-body { display: grid; gap: var(--s5); min-width: 0; }
+  .field { display: grid; gap: 6px; min-width: 0; }
+  .field > label, .field > .label { font-weight: 500; }
+  .field > select { justify-self: start; }
+  .field .help { color: var(--muted); font-size: var(--t-xs); letter-spacing: 0.01em; }
+  .suggest { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .suggest button { border: 1px solid var(--line); background: transparent; border-radius: 4px; padding: 1px 6px; font: 11.5px var(--mono); color: var(--muted); cursor: pointer; }
+  .suggest button:hover { color: var(--text); border-color: var(--line-strong); }
+  .inline { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+  .times { display: grid; gap: var(--s2); justify-items: start; }
+  .preview { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-group); padding: var(--s4); display: grid; gap: var(--s3); }
+  .preview .sentence { font-size: var(--t-md); font-weight: 500; }
+  .preview .sentence.bad { color: var(--failed); font-weight: 400; font-size: var(--t-sm); }
+  .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-control); overflow: hidden; }
+  .week > div { background: var(--surface); padding: var(--s2); min-height: 76px; font-size: var(--t-xs); }
+  .week .d { font-weight: 600; margin-bottom: 4px; }
+  .week .d.today { color: var(--accent); }
+  .week .t { color: var(--text); }
+  .week .none { color: var(--subtle); }
+  .week .many { font-weight: 600; }
+  .note { color: var(--muted); font-size: var(--t-xs); }
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--surface); box-shadow: var(--shadow-bar); }
+  .savebar-in { max-width: 1040px; margin: 0 auto; padding: var(--s3) var(--s5); display: flex; align-items: center; gap: var(--s3); }
+  .savebar .status { flex: 1; min-width: 0; color: var(--muted); }
+  .savebar .status.dirty { color: var(--text); font-weight: 500; }
+  .savebar .err { color: var(--failed); font-weight: 400; }
+  .toast { position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 500; z-index: 9; }
+  .toast:empty { display: none; }
+
+  @media (max-width: 960px) {
+    .sect { grid-template-columns: 1fr; gap: var(--s4); }
+  }
+  @media (max-width: 760px) { .hide-narrow { display: none; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>RoutineBar</h1>
-  <nav><a href="#inbox">Inbox</a><a href="#routines">Routines</a><a href="#runs">Runs</a></nav>
+<header class="top">
+  <div class="top-in">
+    <span class="brand">RoutineBar</span>
+    <nav class="tabs" aria-label="Sections">
+      <a href="#inbox">Inbox <span class="count" id="inboxCount"></span></a>
+      <a href="#routines">Routines</a>
+      <a href="#runs">Runs</a>
+    </nav>
+  </div>
 </header>
 <main id="view"></main>
-<script>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module">
+import { parseCron, matches, describe } from "/cron.mjs";
+
 const $ = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-const when = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "");
-const badge = (state) => `<span class="badge ${state}">${state.replace("_", " ")}</span>`;
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { "content-type": "application/json" } });
@@ -55,145 +229,612 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(body.error);
   return body;
 }
+const post = (path, body) => api(path, { method: "POST", body: body && JSON.stringify(body) });
 
-const itemHtml = (i) => `<li>${i.url ? `<a href="${esc(i.url)}" target="_blank">${esc(i.title)}</a>` : esc(i.title)} <span class="muted">${esc(i.kind)}${i.note ? ` · ${esc(i.note)}` : ""}</span></li>`;
-const threadHtml = (t) => `<li><a href="${esc(t.url)}" target="_blank">T3 thread for ${esc(t.key)}</a>${t.reused ? ' <span class="muted">(existing)</span>' : ""}</li>`;
+let toastTimer;
+function toast(msg) {
+  $("#toast").textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($("#toast").textContent = ""), 3500);
+}
 
-const views = {
-  async inbox(el) {
-    const { entries } = await api("/api/inbox");
-    el.innerHTML = entries.length ? "" : '<p class="muted">Nothing needs you.</p>';
-    for (const e of entries) {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `<div class="row"><strong>${esc(e.routineName)}</strong>${badge(e.state)}<span class="muted grow">${when(e.finishedAt)}</span><a href="#runs/${esc(e.runId)}">details</a><button>Ack</button></div>
-        <p>${esc(e.summary)}</p>${e.items.length ? `<ul>${e.items.map(itemHtml).join("")}</ul>` : ""}${e.threads.length ? `<ul>${e.threads.map(threadHtml).join("")}</ul>` : ""}`;
-      $("button", card).onclick = async () => (await api(`/api/runs/${e.runId}/ack`, { method: "POST" }), render());
-      el.append(card);
+/* ---------- Time formatting ---------- */
+const clock = (h, m = 0) => new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", ...(m ? { minute: "2-digit" } : {}) });
+const absTime = (iso) => new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+function rel(iso, now = Date.now()) {
+  const s = Math.round((Date.parse(iso) - now) / 1000);
+  const a = Math.abs(s);
+  const v = a < 45 ? null : a < 3600 ? `${Math.round(a / 60)} min` : a < 86400 ? `${Math.round(a / 3600)} h` : `${Math.round(a / 86400)} d`;
+  if (!v) return s > 0 ? "in a moment" : "just now";
+  return s > 0 ? `in ${v}` : `${v} ago`;
+}
+const timeEl = (iso) => (iso ? `<time datetime="${esc(iso)}" title="${esc(absTime(iso))}">${rel(iso)}</time>` : "");
+const refreshTimes = () => $$("time[datetime]").forEach((t) => (t.textContent = rel(t.dateTime)));
+setInterval(refreshTimes, 30e3);
+function duration(a, b) {
+  const s = Math.round((Date.parse(b) - Date.parse(a)) / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min ${s % 60} s` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+const STATE = { running: "Running", done: "Done", needs_input: "Needs you", failed: "Failed" };
+const state = (s, pill) => `<span class="state ${s}${pill ? " pill" : ""}">${STATE[s] ?? esc(s)}</span>`;
+const TRIGGER = { schedule: "Scheduled", manual: "Run now" };
+
+/* ---------- Schedule model ----------
+   Builder model: { mode: "times", days, times: [[h, m]] } | { mode: "interval", every, unit, window: [h1, h2] | null, days } | { mode: "custom" }
+   days are dow numbers 0..6. The cron string stays the saved truth; the model is derived from it and back. */
+const WEEK = [1, 2, 3, 4, 5, 6, 0];
+const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const EVERY = [[5, "min"], [10, "min"], [15, "min"], [20, "min"], [30, "min"], [1, "hour"], [2, "hour"], [3, "hour"], [4, "hour"], [6, "hour"], [8, "hour"], [12, "hour"]];
+const sorted = (set) => [...set].sort((a, b) => a - b);
+const isRun = (v) => v.every((x, i) => i === 0 || x === v[i - 1] + 1);
+
+function dowField(days) {
+  if (days.length === 7) return "*";
+  const parts = [];
+  for (let i = 0; i < days.length; ) {
+    let j = i;
+    while (j + 1 < days.length && days[j + 1] === days[j] + 1) j++;
+    parts.push(j - i >= 2 ? `${days[i]}-${days[j]}` : days.slice(i, j + 1).join(","));
+    i = j + 1;
+  }
+  return parts.join(",");
+}
+
+function toCron(s) {
+  const dow = dowField(sorted(s.days));
+  if (s.mode === "interval") {
+    const span = s.window ? `${s.window[0]}-${s.window[1]}` : "*";
+    return s.unit === "min" ? `*/${s.every} ${span} * * ${dow}` : `0 ${span}/${s.every} * * ${dow}`;
+  }
+  const byMinute = new Map();
+  for (const [h, m] of [...s.times].sort((a, b) => a[0] * 60 + a[1] - (b[0] * 60 + b[1]))) byMinute.set(m, [...(byMinute.get(m) ?? []), h]);
+  return [...byMinute].map(([m, hs]) => `${m} ${[...new Set(hs)].join(",")} * * ${dow}`).join("; ");
+}
+
+function fromCron(text) {
+  let cs;
+  try { cs = parseCron(text); } catch { return null; }
+  const days = (c) => (c.domStar && c.dom.size === 31 && c.month.size === 12 ? sorted(c.dow) : null);
+  const d0 = days(cs[0]);
+  if (!d0 || cs.some((c) => days(c)?.join() !== d0.join())) return null;
+  if (cs.length === 1) {
+    const c = cs[0];
+    const mins = sorted(c.minute), hours = sorted(c.hour);
+    const window = hours.length === 24 ? null : [hours[0], hours.at(-1)];
+    const step = mins[1] - mins[0];
+    if (mins.length > 1 && isRun(hours) && 60 % step === 0 && mins.length === 60 / step && mins.every((m, i) => m === i * step) && EVERY.some(([n, u]) => n === step && u === "min"))
+      return { mode: "interval", every: step, unit: "min", window, days: d0 };
+    const hstep = hours[1] - hours[0];
+    if (mins.length === 1 && mins[0] === 0 && hours.length >= 3 && hours.every((h, i) => h === hours[0] + i * hstep) && EVERY.some(([n, u]) => n === hstep && u === "hour")) {
+      const full = hours[0] === 0 && hours.at(-1) + hstep >= 24;
+      return { mode: "interval", every: hstep, unit: "hour", window: full ? null : [hours[0], hours.at(-1)], days: d0 };
     }
-  },
+  }
+  const times = cs.flatMap((c) => sorted(c.hour).flatMap((h) => sorted(c.minute).map((m) => [h, m])));
+  if (times.length > 12) return null;
+  return { mode: "times", days: d0, times: times.sort((a, b) => a[0] * 60 + a[1] - (b[0] * 60 + b[1])) };
+}
 
-  async routines(el) {
-    const list = await api("/api/routines");
-    el.innerHTML = `<div class="row" style="margin-bottom:12px"><span class="grow"></span><a href="#edit/"><button class="primary">New routine</button></a></div>`;
-    for (const r of list) {
-      const card = document.createElement("div");
-      card.className = "card row";
-      card.innerHTML = `<input type="checkbox" ${r.enabled ? "checked" : ""} title="Enabled"><div class="grow"><strong>${esc(r.name)}</strong> <span class="muted">${esc(r.agent)} · ${esc(r.model)} · <code>${esc(r.schedule)}</code></span><div class="muted next"></div></div><button class="run">Run now</button><a href="#edit/${esc(r.id)}"><button>Edit</button></a>`;
-      $("input", card).onchange = async (ev) => (await api(`/api/routines/${r.id}`, { method: "PUT", body: JSON.stringify({ ...r, enabled: ev.target.checked }) }), render());
-      $(".run", card).onclick = async () => {
-        try { const run = await api(`/api/routines/${r.id}/run`, { method: "POST" }); location.hash = `#runs/${run.id}`; } catch (e) { alert(e.message); }
-      };
-      api(`/api/cron/preview?expr=${encodeURIComponent(r.schedule)}`).then((p) => ($(".next", card).textContent = `${p.description}. Next: ${r.enabled ? when(p.next[0]) : "disabled"}`));
-      el.append(card);
-    }
-  },
+function daysText(days) {
+  const k = sorted(days).join();
+  if (k === "0,1,2,3,4,5,6") return "every day";
+  if (k === "1,2,3,4,5") return "weekdays";
+  if (k === "0,6") return "weekends";
+  return WEEK.filter((d) => days.includes(d)).map((d) => DAY[d]).join(", ");
+}
+const listFmt = new Intl.ListFormat("en", { type: "conjunction" });
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
 
-  async runs(el, id) {
-    if (id) {
-      const run = await api(`/api/runs/${id}`);
-      el.innerHTML = `<div class="card"><div class="row"><strong>${esc(run.routineId)}</strong>${badge(run.state)}<span class="muted">${esc(run.trigger)} · ${when(run.startedAt)}${run.finishedAt ? ` to ${when(run.finishedAt)}` : ""}</span></div>
-        ${run.summary ? `<p>${esc(run.summary)}</p>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}
-        ${run.items.length ? `<ul>${run.items.map(itemHtml).join("")}</ul>` : ""}${run.threads.length ? `<ul>${run.threads.map(threadHtml).join("")}</ul>` : ""}
-        <label>Log</label><pre>${esc(run.log) || "(empty)"}</pre></div>`;
-      if (run.state === "running") setTimeout(() => location.hash === `#runs/${id}` && render(), 3000);
-      return;
+function sentence(s, cron) {
+  if (!s) return cron ? describe(parseCron(cron)) : "";
+  if (s.mode === "times") return cap(`${daysText(s.days)} at ${listFmt.format(s.times.map(([h, m]) => clock(h, m)))}`);
+  const every = s.every === 1 && s.unit === "hour" ? "Every hour" : `Every ${s.every} ${s.unit === "min" ? "minutes" : "hours"}`;
+  let span = "";
+  if (s.window) {
+    const lastMin = s.unit === "min" ? 60 - s.every : 0;
+    const lastHour = s.unit === "min" ? s.window[1] : s.window[0] + Math.floor((s.window[1] - s.window[0]) / s.every) * s.every;
+    span = `, ${clock(s.window[0])} to ${clock(lastHour, lastMin)}`;
+  }
+  return `${every}${span}, ${daysText(s.days)}`;
+}
+const scheduleText = (cron) => { try { return sentence(fromCron(cron), cron); } catch { return cron; } };
+
+function weekRuns(cron, from = new Date()) {
+  const c = parseCron(cron);
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  return Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const runs = [];
+    for (let m = 0; m < 1440; m++) {
+      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, m);
+      if (t > from && matches(c, t)) runs.push(t);
     }
+    return { day, runs };
+  });
+}
+
+/* ---------- Unsaved-changes guard ---------- */
+let dirty = false;
+let lastHash = location.hash;
+addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); });
+
+/* ---------- Views ---------- */
+const views = {};
+let inboxSnapshot = "";
+let failedOpen = false;
+
+function inboxModel(entries) {
+  const review = [], t3 = [], failed = [];
+  for (const e of entries) {
+    if (e.state === "failed") { failed.push({ e, key: `${e.runId}` }); continue; }
+    if (!e.items.length) { review.push({ e, key: `${e.runId}` }); continue; }
+    for (const item of e.items) {
+      const thread = item.kind === "code" && e.threads.find((t) => t.key === item.key);
+      (thread ? t3 : review).push({ e, item, thread, key: `${e.runId}|${item.key}` });
+    }
+  }
+  return { review, t3, failed };
+}
+
+const isPr = (i) => /^pr:/.test(i?.key ?? "");
+function summaryLine({ review, t3, failed }) {
+  const total = review.length + t3.length + failed.length;
+  if (!total) return null;
+  const noun = review.every((r) => isPr(r.item)) ? (review.length === 1 ? "PR" : "PRs") : review.length === 1 ? "item" : "items";
+  const parts = [review.length && `${review.length} ${noun} to review`, t3.length && `${t3.length} started in T3`, failed.length && `${failed.length} failed ${failed.length === 1 ? "run" : "runs"}`].filter(Boolean);
+  return { total, head: `${total} ${total === 1 ? "thing needs" : "things need"} you`, parts };
+}
+
+function inboxRow({ e, item, thread, key }) {
+  let title, note, primary;
+  if (thread) {
+    title = item.title; note = item.note;
+    primary = `<a class="btn primary" data-primary href="${esc(thread.url)}" target="_blank" rel="noopener">Open thread</a>`;
+  } else if (item) {
+    title = item.title; note = item.note;
+    primary = item.url
+      ? `<a class="btn primary" data-primary href="${esc(item.url)}" target="_blank" rel="noopener">${isPr(item) ? "Open PR" : "Open link"}</a>`
+      : `<a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a>`;
+  } else {
+    title = e.summary || "Run needs you";
+    primary = `<a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a>`;
+  }
+  const meta = [
+    thread && `<span>${thread.reused ? "Existing thread" : "Thread started"}</span>`,
+    thread && item.url && `<a href="${esc(item.url)}" target="_blank" rel="noopener">${isPr(item) ? "PR" : "Link"}</a>`,
+    `<a href="#runs/${esc(e.runId)}">${esc(e.routineName)}</a>`,
+    e.finishedAt && `<span>${timeEl(e.finishedAt)}</span>`,
+  ].filter(Boolean).join("");
+  return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="${esc(item?.key ?? "")}">
+    <div class="row-main">
+      <div class="row-title">${esc(title)}</div>
+      ${note ? `<div class="row-note">${esc(note)}</div>` : ""}
+      <div class="row-meta">${meta}</div>
+    </div>
+    <div class="row-actions">${primary}<button class="btn" data-done>Done</button></div>
+  </li>`;
+}
+
+function failedRow({ e, key }) {
+  return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="">
+    <div class="row-main">
+      <div class="row-title">${esc(e.routineName)}</div>
+      <div class="row-note mono">${esc(e.summary || "Failed")}</div>
+      <div class="row-meta"><span class="state failed">Failed</span><span>${timeEl(e.finishedAt)}</span></div>
+    </div>
+    <div class="row-actions"><a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a><button class="btn" data-done>Done</button></div>
+  </li>`;
+}
+
+views.inbox = async (el, _, { poll } = {}) => {
+  const data = await api("/api/inbox");
+  const snap = JSON.stringify(data);
+  if (poll && snap === inboxSnapshot) return;
+  inboxSnapshot = snap;
+  const focusKey = document.activeElement?.closest?.(".row")?.dataset.key;
+  const m = inboxModel(data.entries);
+  const line = summaryLine(m);
+  $("#inboxCount").textContent = line?.total ?? "";
+  if (!line) {
     const routines = await api("/api/routines");
-    const filter = new URLSearchParams(location.hash.split("?")[1]).get("routineId") ?? "";
-    const runs = await api(`/api/runs?limit=100${filter ? `&routineId=${encodeURIComponent(filter)}` : ""}`);
-    el.innerHTML = `<div class="row" style="margin-bottom:12px"><select><option value="">All routines</option>${routines.map((r) => `<option value="${esc(r.id)}" ${r.id === filter ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>
-      <table><tr><th>Started</th><th>Routine</th><th>Trigger</th><th>State</th><th>Summary</th></tr>
-      ${runs.map((r) => `<tr class="click" data-id="${esc(r.id)}"><td>${when(r.startedAt)}</td><td>${esc(r.routineId)}</td><td>${esc(r.trigger)}</td><td>${badge(r.state)}</td><td>${esc(r.summary ?? r.error ?? "")}</td></tr>`).join("")}</table>`;
-    $("select", el).onchange = (ev) => (location.hash = ev.target.value ? `#runs?routineId=${ev.target.value}` : "#runs");
-    el.querySelectorAll("tr.click").forEach((tr) => (tr.onclick = () => (location.hash = `#runs/${tr.dataset.id}`)));
-  },
-
-  async edit(el, id) {
-    const r = id ? (await api("/api/routines")).find((x) => x.id === id) : { enabled: false, schedule: "0 9 * * 1-5", agent: "claude", model: "opus", cwd: "", prompt: "", t3: { provider: "claudeAgent", model: "claude-opus-5-5", runtimeMode: "approval-required" } };
-    const opts = (list, v) => list.map((o) => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("");
-    el.innerHTML = `<form class="card">
-      <div class="grid">
-        <div><label>Id (slug)</label><input name="id" value="${esc(r.id)}" ${id ? "readonly" : ""} required pattern="[a-z0-9][a-z0-9-]*"></div>
-        <div><label>Name</label><input name="name" value="${esc(r.name)}" required></div>
-        <div><label>Agent</label><select name="agent">${opts(["claude", "codex", "custom"], r.agent)}</select></div>
-        <div><label>Model</label><input name="model" value="${esc(r.model)}" required></div>
-        <div><label>Working directory</label><input name="cwd" value="${esc(r.cwd)}" required placeholder="/Users/you/Projects"></div>
-        <div><label><input type="checkbox" name="enabled" ${r.enabled ? "checked" : ""}> Enabled</label></div>
-      </div>
-      <div id="commandRow"><label>Command (sh, gets $PROMPT and $MODEL)</label><input name="command" value="${esc(r.command)}" style="width:100%"></div>
-      <label>Schedule</label>
-      <div class="row">
-        <select id="preset">
-          <option value="minutes">Every N minutes</option><option value="hourly">Hourly at :MM</option><option value="daily">Daily at HH:MM</option>
-          <option value="weekdays">Weekdays at HH:MM</option><option value="weekly">Weekly on days at HH:MM</option><option value="custom">Custom</option>
-        </select>
-        <span id="pN">every <input id="n" type="number" min="1" max="59" value="30" style="width:64px"> min</span>
-        <span id="pMM">at :<input id="mm" type="number" min="0" max="59" value="0" style="width:64px"></span>
-        <span id="pDays">${DAYS.map((d, i) => `<label style="display:inline;font-weight:400"><input type="checkbox" class="day" value="${i}" ${i === 1 ? "checked" : ""}>${d}</label>`).join(" ")}</span>
-        <span id="pTime">at <input id="time" type="time" value="09:00"></span>
-      </div>
-      <div class="row" style="margin-top:8px"><input name="schedule" value="${esc(r.schedule)}" required style="font-family:ui-monospace,monospace;width:220px"><span id="preview" class="muted"></span></div>
-      <label>Prompt</label><textarea name="prompt">${esc(r.prompt)}</textarea>
-      <label>T3 thread for code items</label>
-      <div class="row"><select name="t3provider">${opts(["claudeAgent", "codex"], r.t3.provider)}</select><input name="t3model" value="${esc(r.t3.model)}"><select name="t3runtimeMode">${opts(["approval-required", "auto-accept-edits", "full-access"], r.t3.runtimeMode)}</select></div>
-      <p class="error" id="err"></p>
-      <div class="row"><button class="primary">Save</button><a href="#routines"><button type="button">Cancel</button></a><span class="grow"></span>${id ? '<button type="button" id="del">Delete</button>' : ""}</div>
-    </form>`;
-    const form = $("form", el);
-    const f = form.elements;
-    const showCommand = () => ($("#commandRow").style.display = f.agent.value === "custom" ? "" : "none");
-    f.agent.onchange = showCommand;
-    showCommand();
-
-    const presetFields = { minutes: ["pN"], hourly: ["pMM"], daily: ["pTime"], weekdays: ["pTime"], weekly: ["pDays", "pTime"], custom: [] };
-    const toCron = () => {
-      const [h, m] = $("#time").value.split(":").map(Number);
-      const days = [...el.querySelectorAll(".day:checked")].map((c) => c.value).join(",") || "1";
-      return { minutes: `*/${$("#n").value} * * * *`, hourly: `${$("#mm").value} * * * *`, daily: `${m} ${h} * * *`, weekdays: `${m} ${h} * * 1-5`, weekly: `${m} ${h} * * ${days}` }[$("#preset").value];
-    };
-    const showPreset = () => ["pN", "pMM", "pDays", "pTime"].forEach((p) => ($("#" + p).style.display = presetFields[$("#preset").value].includes(p) ? "" : "none"));
-    let seq = 0;
-    const preview = async () => {
-      const mine = ++seq;
-      const p = await api(`/api/cron/preview?expr=${encodeURIComponent(f.schedule.value)}`);
-      if (mine !== seq) return;
-      $("#preview").innerHTML = p.valid ? `${esc(p.description)}. Next: ${p.next.map(when).join("; ")}` : `<span class="error">${esc(p.error)}</span>`;
-    };
-    const fromPreset = () => {
-      showPreset();
-      if ($("#preset").value !== "custom") f.schedule.value = toCron();
-      preview();
-    };
-    $("#preset").onchange = fromPreset;
-    el.querySelectorAll("#pN input, #pMM input, #pDays input, #pTime input").forEach((i) => (i.oninput = fromPreset));
-    f.schedule.oninput = () => (($("#preset").value = "custom"), showPreset(), preview());
-    $("#preset").value = "custom";
-    showPreset();
-    preview();
-
-    form.onsubmit = async (ev) => {
-      ev.preventDefault();
-      const body = {
-        name: f.name.value, enabled: f.enabled.checked, schedule: f.schedule.value, agent: f.agent.value, model: f.model.value,
-        command: f.command.value, cwd: f.cwd.value, prompt: f.prompt.value,
-        t3: { provider: f.t3provider.value, model: f.t3model.value, runtimeMode: f.t3runtimeMode.value },
-      };
-      try { await api(`/api/routines/${encodeURIComponent(f.id.value)}`, { method: "PUT", body: JSON.stringify(body) }); location.hash = "#routines"; } catch (e) { $("#err").textContent = e.message; }
-    };
-    if (id) $("#del").onclick = async () => confirm(`Delete ${r.name}?`) && (await api(`/api/routines/${id}`, { method: "DELETE" }), (location.hash = "#routines"));
-  },
+    const next = routines.filter((r) => r.nextRun).sort((a, b) => a.nextRun.localeCompare(b.nextRun))[0];
+    el.innerHTML = `<div class="empty">
+      <h1 class="headline">Nothing needs you</h1>
+      <p class="sub">${next ? `Next check: <a href="#routines/${esc(next.id)}">${esc(next.name)}</a> ${timeEl(next.nextRun)}.` : `No routine is switched on. <a href="#routines">Turn one on</a> to start filling this inbox.`}</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="page-head"><div class="grow"><h1 class="headline">${line.head}</h1><p class="sub">${line.parts.join(" · ")}</p></div></div>
+    ${m.review.length ? `<section class="group"><h2 class="group-head caps">Needs your review</h2><ul class="list">${m.review.map(inboxRow).join("")}</ul></section>` : ""}
+    ${m.t3.length ? `<section class="group"><h2 class="group-head caps">Started in T3</h2><ul class="list">${m.t3.map(inboxRow).join("")}</ul></section>` : ""}
+    ${m.failed.length ? `<details class="group" ${failedOpen ? "open" : ""}><summary><span class="caps">Failed runs</span><span class="subtle">${m.failed.length}</span></summary><ul class="list">${m.failed.map(failedRow).join("")}</ul></details>` : ""}
+    <p class="hint"><span class="kbd">J</span> <span class="kbd">K</span> move, <span class="kbd">O</span> open, <span class="kbd">D</span> done</p>`;
+  const det = $("details.group", el);
+  if (det) det.ontoggle = () => (failedOpen = det.open);
+  if (focusKey) $$(".row", el).find((r) => r.dataset.key === focusKey)?.focus();
 };
 
-async function render() {
-  const [route, arg] = (location.hash.slice(1).split("?")[0] || "inbox").split("/");
-  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${route === "edit" ? "routines" : route}`));
-  const el = $("#view");
-  try { await (views[route] ?? views.inbox)(el, arg && decodeURIComponent(arg)); } catch (e) { el.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+async function markDone(row) {
+  const rows = $$(".row");
+  const next = rows[rows.indexOf(row) + 1] ?? rows[rows.indexOf(row) - 1];
+  const { run, item } = row.dataset;
+  row.style.visibility = "hidden";
+  try {
+    await post(`/api/runs/${encodeURIComponent(run)}/ack`, item ? { key: item } : undefined);
+  } catch (e) {
+    row.style.visibility = "";
+    return toast(e.message);
+  }
+  const nextKey = next?.dataset.key;
+  await views.inbox($("#view"));
+  if (nextKey) $$(".row").find((r) => r.dataset.key === nextKey)?.focus();
 }
-addEventListener("hashchange", render);
+
+document.addEventListener("click", (ev) => {
+  const done = ev.target.closest("[data-done]");
+  if (done) markDone(done.closest(".row"));
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.target.closest("input, textarea, select, [contenteditable]")) return;
+  if (route() !== "inbox") return;
+  const rows = $$(".row").filter((r) => r.offsetParent);
+  if (!rows.length) return;
+  const cur = ev.target.closest?.(".row");
+  const i = rows.indexOf(cur);
+  const k = ev.key.toLowerCase();
+  if (k === "j" || ev.key === "ArrowDown") (rows[i + 1] ?? rows[i < 0 ? 0 : i])?.focus();
+  else if (k === "k" || ev.key === "ArrowUp") (rows[i - 1] ?? rows[0]).focus();
+  else if (cur && (k === "o" || (ev.key === "Enter" && ev.target === cur))) $("[data-primary]", cur).click();
+  else if (cur && k === "d") markDone(cur);
+  else return;
+  ev.preventDefault();
+});
+
+/* Routines */
+views.routines = async (el, id) => {
+  if (id !== undefined) return editor(el, id === "new" ? null : id);
+  const list = (await api("/api/routines")).sort((a, b) => b.enabled - a.enabled || a.name.localeCompare(b.name));
+  const on = list.filter((r) => r.enabled).length;
+  el.innerHTML = `
+    <div class="page-head"><div class="grow"><h1 class="headline">Routines</h1><p class="sub">${list.length} ${list.length === 1 ? "routine" : "routines"}, ${on} on</p></div><a class="btn primary" href="#routines/new">New routine</a></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th style="width:56px"><span class="sr">On</span></th><th>Routine</th><th>Schedule</th><th class="hide-narrow">Last run</th><th class="nowrap">Next</th><th class="right"><span class="sr">Actions</span></th></tr></thead>
+      <tbody>${list.map((r) => `<tr class="link${r.enabled ? "" : " off"}" data-id="${esc(r.id)}">
+        <td><button class="switch" role="switch" aria-checked="${r.enabled}" aria-label="${r.enabled ? "Turn off" : "Turn on"} ${esc(r.name)}"></button></td>
+        <td class="name"><a href="#routines/${esc(r.id)}">${esc(r.name)}</a><div class="muted">${{ claude: "Claude Code", codex: "Codex", custom: "Shell command" }[r.agent]} · <span class="mono">${esc(r.model)}</span></div></td>
+        <td>${esc(scheduleText(r.schedule))}</td>
+        <td class="hide-narrow nowrap">${r.lastRun ? `<a href="#runs/${esc(r.lastRun.id)}" class="state quiet ${r.lastRun.state}" title="${esc(STATE[r.lastRun.state])}">${timeEl(r.lastRun.finishedAt ?? r.lastRun.startedAt)}</a>` : `<span class="subtle">Never</span>`}</td>
+        <td class="nowrap">${r.nextRun ? timeEl(r.nextRun) : `<span class="subtle">Off</span>`}</td>
+        <td class="right"><button class="btn" data-run>Run now</button></td>
+      </tr>`).join("")}</tbody>
+    </table></div>`;
+  for (const tr of $$("tbody tr", el)) {
+    const r = list.find((x) => x.id === tr.dataset.id);
+    tr.onclick = (ev) => { if (!ev.target.closest("a, button")) location.hash = `#routines/${r.id}`; };
+    $(".switch", tr).onclick = async () => {
+      try { await api(`/api/routines/${r.id}`, { method: "PUT", body: JSON.stringify({ ...r, enabled: !r.enabled }) }); } catch (e) { toast(e.message); }
+      render();
+    };
+    $("[data-run]", tr).onclick = async () => {
+      try { location.hash = `#runs/${(await post(`/api/routines/${r.id}/run`)).id}`; } catch (e) { toast(e.message === "already running" ? `${r.name} is already running` : e.message); }
+    };
+  }
+};
+
+/* Runs */
+views.runs = async (el, id) => {
+  if (id) return runDetail(el, id);
+  const routines = await api("/api/routines");
+  const names = Object.fromEntries(routines.map((r) => [r.id, r.name]));
+  const filter = new URLSearchParams(location.hash.split("?")[1]).get("routineId") ?? "";
+  const runs = await api(`/api/runs?limit=100${filter ? `&routineId=${encodeURIComponent(filter)}` : ""}`);
+  el.innerHTML = `
+    <div class="page-head"><div class="grow"><h1 class="headline">Runs</h1><p class="sub">${runs.length} most recent</p></div>
+      <label class="sr" for="rf">Routine</label><select id="rf"><option value="">All routines</option>${routines.map((r) => `<option value="${esc(r.id)}" ${r.id === filter ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>
+    ${runs.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>State</th><th>Routine</th><th>Summary</th><th class="nowrap">Started</th><th class="hide-narrow nowrap">Duration</th></tr></thead>
+      <tbody>${runs.map((r) => `<tr class="link" tabindex="0" data-id="${esc(r.id)}">
+        <td>${state(r.state)}</td>
+        <td class="name nowrap"><a href="#runs/${esc(r.id)}">${esc(names[r.routineId] ?? r.routineId)}</a></td>
+        <td class="clip muted">${esc(r.summary ?? r.error ?? "")}</td>
+        <td class="nowrap">${timeEl(r.startedAt)}</td>
+        <td class="hide-narrow nowrap muted">${r.finishedAt ? duration(r.startedAt, r.finishedAt) : ""}</td>
+      </tr>`).join("")}</tbody></table></div>` : `<p class="muted">No runs yet.</p>`}`;
+  $("#rf", el).onchange = (ev) => (location.hash = ev.target.value ? `#runs?routineId=${ev.target.value}` : "#runs");
+  for (const tr of $$("tbody tr", el)) {
+    tr.onclick = (ev) => { if (!ev.target.closest("a")) location.hash = `#runs/${tr.dataset.id}`; };
+    tr.onkeydown = (ev) => { if (ev.key === "Enter") location.hash = `#runs/${tr.dataset.id}`; };
+  }
+};
+
+const KIND = { needs_you: "Needs you", code: "Code", fyi: "FYI" };
+async function runDetail(el, id) {
+  const [run, routines] = await Promise.all([api(`/api/runs/${encodeURIComponent(id)}`), api("/api/routines")]);
+  const r = routines.find((x) => x.id === run.routineId);
+  const done = new Set(run.doneKeys ?? []);
+  el.innerHTML = `
+    <a class="back" href="#runs">← Runs</a>
+    <div class="page-head"><div class="grow"><h1 class="headline">${r ? `<a href="#routines/${esc(r.id)}" style="color:inherit">${esc(r.name)}</a>` : esc(run.routineId)}</h1></div>${state(run.state, true)}</div>
+    <div class="facts">
+      <div><span class="caps">Started</span><span>${esc(absTime(run.startedAt))} <span class="muted">(${timeEl(run.startedAt)})</span></span></div>
+      <div><span class="caps">Duration</span><span>${run.finishedAt ? duration(run.startedAt, run.finishedAt) : `<span class="muted">still running</span>`}</span></div>
+      <div><span class="caps">Trigger</span><span>${TRIGGER[run.trigger] ?? esc(run.trigger)}</span></div>
+      ${run.ackedAt ? `<div><span class="caps">Cleared</span><span>${timeEl(run.ackedAt)}</span></div>` : ""}
+    </div>
+    ${run.summary ? `<p class="summary">${esc(run.summary)}</p>` : ""}
+    ${run.error ? `<div class="error-box">${esc(run.error)}</div>` : ""}
+    ${run.items.length ? `<section class="group"><h2 class="group-head caps">Items</h2><ul class="list">${run.items.map((i) => `<li class="row${done.has(i.key) ? " is-done" : ""}">
+      <span class="kind caps">${KIND[i.kind] ?? esc(i.kind)}</span>
+      <div class="row-main"><div class="row-title">${i.url ? `<a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.title)}</a>` : esc(i.title)}</div>
+        ${i.note ? `<div class="row-note">${esc(i.note)}</div>` : ""}
+        <div class="row-meta"><span class="mono">${esc(i.key)}</span>${i.repoPath ? `<span class="mono">${esc(i.repoPath)}</span>` : ""}${done.has(i.key) ? "<span>Done</span>" : ""}</div></div>
+    </li>`).join("")}</ul></section>` : ""}
+    ${run.threads.length ? `<section class="group"><h2 class="group-head caps">T3 threads</h2><ul class="list">${run.threads.map((t) => `<li class="row">
+      <div class="row-main"><div class="row-title mono" style="font-size:var(--t-sm)">${esc(t.key)}</div><div class="row-meta"><span>${t.reused ? "Existing thread, linked again" : "New thread"}</span></div></div>
+      <div class="row-actions"><a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">Open thread</a></div></li>`).join("")}</ul></section>` : ""}
+    <details class="disclosure"><summary>Raw log</summary><pre class="log">${esc(run.log) || "(empty)"}</pre></details>`;
+  if (run.state === "running") setTimeout(() => location.hash === `#runs/${id}` && render(), 3000);
+}
+
+/* Editor */
+const AGENTS = [["claude", "Claude Code"], ["codex", "Codex"], ["custom", "Shell command"]];
+const PROVIDERS = [["claudeAgent", "Claude"], ["codex", "Codex"]];
+const MODES = [
+  ["approval-required", "Ask before changes", "The thread proposes each edit and command and waits for you to approve it."],
+  ["auto-accept-edits", "Auto-accept edits", "File edits apply on their own; commands still wait for you."],
+  ["full-access", "Full access", "The thread edits files and runs commands without asking."],
+];
+const radios = (name, opts, v) => `<div class="seg" role="radiogroup">${opts.map(([val, label]) => `<label><input type="radio" name="${name}" value="${val}" ${val === v ? "checked" : ""}><span>${label}</span></label>`).join("")}</div>`;
+const dayChips = (days) => `<div class="chips" role="group" aria-label="Days">${WEEK.map((d) => `<label><input type="checkbox" name="day" value="${d}" ${days.includes(d) ? "checked" : ""} aria-label="${DAY[d]}"><span>${DAY[d]}</span></label>`).join("")}</div>
+  <div class="inline"><button type="button" class="btn quiet" data-days="1,2,3,4,5">Weekdays</button><button type="button" class="btn quiet" data-days="0,1,2,3,4,5,6">Every day</button></div>`;
+const hourOptions = (v) => Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === v ? "selected" : ""}>${clock(h)}</option>`).join("");
+const pad = (n) => String(n).padStart(2, "0");
+const timeRow = ([h, m], canRemove) => `<div class="inline time-row"><input type="time" value="${pad(h)}:${pad(m)}" aria-label="Time" required>${canRemove ? `<button type="button" class="btn quiet" data-remove aria-label="Remove time">Remove</button>` : ""}</div>`;
+const slug = (s) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "routine";
+
+function builderHtml(s) {
+  const mode = s.mode;
+  if (mode === "custom") return `<p class="note">This schedule uses cron features the builder does not cover. Pick a mode above to replace it, or edit it under Advanced.</p>`;
+  if (mode === "times") return `
+    <div class="field"><span class="label">Days</span>${dayChips(s.days)}</div>
+    <div class="field"><span class="label">Times</span><div class="times">${s.times.map((t) => timeRow(t, s.times.length > 1)).join("")}<button type="button" class="btn quiet" data-add-time>+ Add time</button></div></div>`;
+  const ev = `${s.every}|${s.unit}`;
+  return `
+    <div class="field"><label for="every">Run</label><select id="every">${EVERY.map(([n, u]) => `<option value="${n}|${u}" ${`${n}|${u}` === ev ? "selected" : ""}>Every ${n === 1 ? "hour" : `${n} ${u === "min" ? "minutes" : "hours"}`}</option>`).join("")}</select></div>
+    <div class="field"><label class="inline" style="font-weight:500"><input type="checkbox" id="useWindow" ${s.window ? "checked" : ""}> Only during these hours</label>
+      <div class="inline" id="windowRow" ${s.window ? "" : "hidden"}><select id="w0" aria-label="From">${hourOptions(s.window?.[0] ?? 8)}</select><span class="muted">through the</span><select id="w1" aria-label="Until">${hourOptions(s.window?.[1] ?? 18)}</select><span class="muted">hour</span></div></div>
+    <div class="field"><span class="label">Days</span>${dayChips(s.days)}</div>`;
+}
+
+function readBuilder(root, mode) {
+  const days = $$("input[name=day]:checked", root).map((c) => Number(c.value));
+  if (mode === "times") return { mode, days, times: $$("input[type=time]", root).filter((i) => i.value).map((i) => i.value.split(":").map(Number)) };
+  const [every, unit] = $("#every", root).value.split("|");
+  const window = $("#useWindow", root).checked ? [Number($("#w0", root).value), Number($("#w1", root).value)].sort((a, b) => a - b) : null;
+  return { mode, every: Number(every), unit, window, days };
+}
+
+async function editor(el, id) {
+  const [routines, models] = await Promise.all([api("/api/routines"), api("/api/models")]);
+  const existing = id ? routines.find((x) => x.id === id) : null;
+  if (id && !existing) throw new Error("No such routine.");
+  const r = existing ?? { name: "", enabled: false, schedule: "0 9 * * 1-5", agent: "claude", model: "opus", cwd: "", prompt: "", t3: { provider: "claudeAgent", model: models.t3.claudeAgent[0], runtimeMode: "approval-required" } };
+  let sched = fromCron(r.schedule) ?? { mode: "custom" };
+
+  el.innerHTML = `<form id="ed" novalidate>
+    <div class="page-head"><div class="grow"><a class="back" href="#routines">← Routines</a><h1 class="headline">${existing ? esc(r.name) : "New routine"}</h1>${existing ? `<p class="sub mono">${esc(r.id)}</p>` : ""}</div>
+      <label class="inline" style="font-weight:500"><span id="onLabel">${r.enabled ? "On" : "Off"}</span><button type="button" class="switch" id="enabled" role="switch" aria-checked="${r.enabled}" aria-label="Run on schedule"></button></label></div>
+
+    <section class="sect"><div class="sect-head"><h2>Basics</h2><p>What runs, and where.</p></div><div class="sect-body">
+      <div class="field"><label for="name">Name</label><input id="name" class="wide" value="${esc(r.name)}" placeholder="Review requested PRs" autocomplete="off" required></div>
+      <div class="field"><span class="label">Agent</span>${radios("agent", AGENTS, r.agent)}</div>
+      <div class="field" id="commandField"><label for="command">Command</label><input id="command" class="wide mono-in" value="${esc(r.command)}" spellcheck="false" autocomplete="off" placeholder="my-agent --model &quot;$MODEL&quot; &quot;$PROMPT&quot;"><span class="help">Runs with sh. Gets $PROMPT and $MODEL in its environment and must print the result block.</span></div>
+      <div class="field"><label for="model">Model</label><input id="model" class="wide mono-in" list="modelList" value="${esc(r.model)}" spellcheck="false" autocomplete="off" required><datalist id="modelList"></datalist><div class="suggest" id="modelSuggest"></div></div>
+      <div class="field"><label for="cwd">Working directory</label><input id="cwd" class="wide mono-in" value="${esc(r.cwd)}" placeholder="/Users/you/Projects" spellcheck="false" autocomplete="off" required><span class="help">The agent starts in this folder. Code threads open here too unless an item names its own repo.</span></div>
+    </div></section>
+
+    <section class="sect"><div class="sect-head"><h2>Schedule</h2><p>Local time. Runs missed while the Mac sleeps are skipped.</p></div><div class="sect-body">
+      <div class="seg" role="radiogroup" aria-label="Schedule type" id="modes"><label><input type="radio" name="mode" value="times"><span>At set times</span></label><label><input type="radio" name="mode" value="interval"><span>On an interval</span></label></div>
+      <div id="builder" class="sect-body"></div>
+      <div class="preview" aria-live="polite"><div class="sentence" id="sentence"></div><div class="week" id="week"></div></div>
+      <details class="disclosure" id="adv"><summary>Advanced: cron expression</summary>
+        <div class="field" style="margin-top:var(--s3)"><input id="cron" class="wide mono-in" value="${esc(r.schedule)}" spellcheck="false" autocomplete="off" aria-label="Cron expression"><span class="help" id="cronHelp"></span></div></details>
+    </div></section>
+
+    <section class="sect"><div class="sect-head"><h2>Instructions</h2><p id="promptHelp"></p></div><div class="sect-body">
+      <textarea id="prompt" rows="16" spellcheck="false" aria-label="Instructions">${esc(r.prompt)}</textarea>
+    </div></section>
+
+    <section class="sect"><div class="sect-head"><h2>When code is needed</h2><p>For each code item a run reports, RoutineBar opens one T3 Code thread with these settings.</p></div><div class="sect-body">
+      <div class="field"><span class="label">Thread runs on</span>${radios("provider", PROVIDERS, r.t3.provider)}</div>
+      <div class="field"><label for="t3model">Model</label><input id="t3model" class="wide mono-in" list="t3List" value="${esc(r.t3.model)}" spellcheck="false" autocomplete="off" required><datalist id="t3List"></datalist><div class="suggest" id="t3Suggest"></div></div>
+      <div class="field"><span class="label">Permissions</span>${radios("runtimeMode", MODES, r.t3.runtimeMode)}<span class="help" id="modeHelp"></span></div>
+    </div></section>
+    ${existing ? `<section class="sect"><div class="sect-head"><h2>Delete</h2><p>Past runs stay in Runs.</p></div><div class="sect-body"><div><button type="button" class="btn danger-text" id="del">Delete this routine</button></div></div></section>` : ""}
+
+    <div class="savebar"><div class="savebar-in"><span class="status" id="saveStatus"></span><a class="btn quiet" href="#routines" id="cancel">Cancel</a><button class="btn primary" id="save">${existing ? "Save changes" : "Create routine"}</button></div></div>
+  </form>`;
+
+  const form = $("#ed", el);
+  const v = (sel) => $(sel, form).value;
+  const radio = (name) => $(`input[name=${name}]:checked`, form)?.value;
+  const enabledBtn = $("#enabled", form);
+
+  const suggest = (listId, boxId, input, opts) => {
+    $(listId, form).innerHTML = opts.map((o) => `<option value="${esc(o)}">`).join("");
+    $(boxId, form).innerHTML = opts.length ? `<span class="help">Suggested:</span>${opts.map((o) => `<button type="button" data-v="${esc(o)}">${esc(o)}</button>`).join("")}` : "";
+    for (const b of $$("button", $(boxId, form))) b.onclick = () => ((input.value = b.dataset.v), changed());
+  };
+  const syncAgent = () => {
+    const agent = radio("agent");
+    $("#commandField", form).hidden = agent !== "custom";
+    $("label[for=model]", form).textContent = agent === "custom" ? "Model (passed as $MODEL)" : "Model";
+    $("#promptHelp", form).textContent = agent === "custom" ? "Passed to the command as $PROMPT. Optional." : "What to check, what never to do, and how findings map to needs_you, code and fyi items. RoutineBar appends the output format.";
+    suggest("#modelList", "#modelSuggest", $("#model", form), models.agents[agent] ?? []);
+  };
+  const syncT3 = () => {
+    suggest("#t3List", "#t3Suggest", $("#t3model", form), models.t3[radio("provider")] ?? []);
+    $("#modeHelp", form).textContent = MODES.find((m) => m[0] === radio("runtimeMode"))?.[2] ?? "";
+  };
+
+  const showSchedule = (cron) => {
+    const s = $("#sentence", form);
+    try {
+      s.textContent = scheduleText(cron);
+      s.className = "sentence";
+      $("#cronHelp", form).textContent = describe(parseCron(cron));
+      const today = new Date().toDateString();
+      $("#week", form).innerHTML = weekRuns(cron).map(({ day, runs }) => `<div>
+        <div class="d${day.toDateString() === today ? " today" : ""}">${day.toDateString() === today ? "Today" : day.toLocaleDateString([], { weekday: "short", day: "numeric" })}</div>
+        ${!runs.length ? `<div class="none">No runs</div>` : runs.length <= 4 ? runs.map((t) => `<div class="t">${clock(t.getHours(), t.getMinutes())}</div>`).join("") : `<div class="many">${runs.length} runs</div><div class="muted">${clock(runs[0].getHours(), runs[0].getMinutes())} to ${clock(runs.at(-1).getHours(), runs.at(-1).getMinutes())}</div>`}
+      </div>`).join("");
+      $("#week", form).hidden = false;
+      return true;
+    } catch (e) {
+      s.textContent = e.message;
+      s.className = "sentence bad";
+      $("#cronHelp", form).textContent = "";
+      $("#week", form).hidden = true;
+      return false;
+    }
+  };
+  const renderBuilder = () => {
+    for (const i of $$("input[name=mode]", form)) i.checked = i.value === sched.mode;
+    $("#builder", form).innerHTML = builderHtml(sched);
+    if (sched.mode === "custom") $("#adv", form).open = true;
+  };
+  const fromBuilder = () => {
+    sched = readBuilder($("#builder", form), sched.mode);
+    if (sched.mode === "times" && !sched.times.length) return;
+    $("#cron", form).value = toCron(sched);
+    showSchedule($("#cron", form).value);
+    changed();
+  };
+
+  const b = $("#builder", form);
+  b.addEventListener("change", (ev) => {
+    if (ev.target.name === "day" && !$$("input[name=day]:checked", b).length) ev.target.checked = true;
+    if (ev.target.id === "useWindow") $("#windowRow", b).hidden = !ev.target.checked;
+    fromBuilder();
+  });
+  b.addEventListener("click", (ev) => {
+    const t = ev.target.closest("button");
+    if (!t) return;
+    if (t.dataset.days) for (const c of $$("input[name=day]", b)) c.checked = t.dataset.days.split(",").includes(c.value);
+    if (t.hasAttribute("data-add-time")) {
+      const last = sched.times.at(-1) ?? [8, 0];
+      sched.times.push([(last[0] + 1) % 24, last[1]]);
+      renderBuilder();
+      $$("input[type=time]", b).at(-1).focus();
+    }
+    if (t.hasAttribute("data-remove")) { t.closest(".time-row").remove(); fromBuilder(); renderBuilder(); return; }
+    fromBuilder();
+  });
+  $("#modes", form).addEventListener("change", () => {
+    const days = sched.days ?? [1, 2, 3, 4, 5];
+    sched = radio("mode") === "times" ? { mode: "times", days, times: [[9, 0]] } : { mode: "interval", every: 30, unit: "min", window: [8, 18], days };
+    renderBuilder();
+    fromBuilder();
+  });
+  $("#cron", form).addEventListener("input", (ev) => {
+    sched = fromCron(ev.target.value) ?? { mode: "custom" };
+    renderBuilder();
+    showSchedule(ev.target.value);
+    changed();
+  });
+
+  const body = () => ({
+    name: v("#name").trim(), enabled: enabledBtn.getAttribute("aria-checked") === "true", schedule: v("#cron"), agent: radio("agent"), model: v("#model").trim(),
+    ...(radio("agent") === "custom" && { command: v("#command") }), cwd: v("#cwd").trim(), prompt: v("#prompt"),
+    t3: { provider: radio("provider"), model: v("#t3model").trim(), runtimeMode: radio("runtimeMode") },
+  });
+  const initial = JSON.stringify(body());
+  const status = $("#saveStatus", form);
+  function changed(err) {
+    dirty = JSON.stringify(body()) !== initial;
+    status.className = "status" + (dirty ? " dirty" : "");
+    status.innerHTML = err ? `<span class="err">${esc(err)}</span>` : dirty ? "Unsaved changes" : existing ? "No changes" : "";
+    $("#save", form).disabled = !!existing && !dirty;
+  }
+  form.addEventListener("input", (ev) => { if (!ev.target.closest("#builder, #cron")) changed(); });
+  form.addEventListener("change", (ev) => {
+    if (ev.target.name === "agent") syncAgent();
+    if (ev.target.name === "provider" || ev.target.name === "runtimeMode") syncT3();
+    if (!ev.target.closest("#builder")) changed();
+  });
+  enabledBtn.onclick = () => {
+    const on = enabledBtn.getAttribute("aria-checked") !== "true";
+    enabledBtn.setAttribute("aria-checked", on);
+    $("#onLabel", form).textContent = on ? "On" : "Off";
+    changed();
+  };
+
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const data = body();
+    const missing = [!data.name && "a name", !data.cwd.startsWith("/") && "an absolute working directory", data.agent === "custom" && !data.command?.trim() && "a command", data.agent !== "custom" && !data.prompt.trim() && "instructions", !data.model && "a model", !data.t3.model && "a thread model"].filter(Boolean);
+    if (missing.length) return changed(`Add ${listFmt.format(missing)}.`);
+    let rid = existing?.id;
+    if (!rid) {
+      const taken = new Set(["new", ...routines.map((x) => x.id)]);
+      rid = slug(data.name);
+      for (let n = 2; taken.has(rid); n++) rid = `${slug(data.name)}-${n}`;
+    }
+    $("#save", form).disabled = true;
+    status.textContent = "Saving…";
+    try {
+      await api(`/api/routines/${encodeURIComponent(rid)}`, { method: "PUT", body: JSON.stringify(data) });
+      dirty = false;
+      toast(existing ? "Saved" : "Routine created");
+      location.hash = existing ? "#routines" : `#routines/${rid}`;
+    } catch (e) {
+      $("#save", form).disabled = false;
+      changed(e.message);
+    }
+  };
+  if (existing) $("#del", form).onclick = async () => {
+    if (!confirm(`Delete ${r.name}? Past runs stay.`)) return;
+    await api(`/api/routines/${r.id}`, { method: "DELETE" });
+    dirty = false;
+    location.hash = "#routines";
+  };
+
+  syncAgent();
+  syncT3();
+  renderBuilder();
+  showSchedule(r.schedule);
+  changed();
+  if (!existing) $("#name", form).focus();
+}
+
+/* ---------- Router ---------- */
+const route = () => (location.hash.slice(1).split("?")[0] || "inbox").split("/")[0];
+async function render(opts) {
+  const [name, arg] = (location.hash.slice(1).split("?")[0] || "inbox").split("/");
+  const view = views[name] ? name : "inbox";
+  for (const a of $$(".tabs a")) a.hash === `#${view}` ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current");
+  if (view !== "inbox") refreshCount();
+  const el = $("#view");
+  try { await views[view](el, arg === undefined ? undefined : decodeURIComponent(arg), opts); }
+  catch (e) { el.innerHTML = `<div class="empty"><h1 class="headline">Something went wrong</h1><p class="sub">${esc(e.message)}</p></div>`; }
+  document.title = view === "inbox" && $("#inboxCount").textContent ? `(${$("#inboxCount").textContent}) RoutineBar` : "RoutineBar";
+}
+addEventListener("hashchange", () => {
+  if (dirty && !confirm("Discard unsaved changes?")) { history.replaceState(null, "", lastHash); return; }
+  dirty = false;
+  lastHash = location.hash;
+  window.scrollTo(0, 0);
+  render();
+});
 render();
-setInterval(() => location.hash.startsWith("#inbox") || !location.hash ? render() : null, 30000);
+async function refreshCount() {
+  try { $("#inboxCount").textContent = summaryLine(inboxModel((await api("/api/inbox")).entries))?.total ?? ""; } catch {}
+}
+setInterval(() => (route() === "inbox" ? render({ poll: true }) : refreshCount()), 15e3);
 </script>
 </body>
 </html>
