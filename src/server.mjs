@@ -7,6 +7,7 @@ import { parseCron, matches, nextRuns, describe } from "./cron.mjs";
 import { AGENTS, startRun, isRunning, failInterrupted } from "./runner.mjs";
 import { seeds } from "./seeds.mjs";
 import { SOURCES, listSource } from "./importers.mjs";
+import { ACTIONS, contextFor, listActions, parseInput } from "./actions.mjs";
 
 const PORT = Number(process.env.ROUTINEBAR_PORT || 4141);
 const INDEX = new URL("../public/index.html", import.meta.url);
@@ -144,24 +145,86 @@ function routinesWithStatus() {
   });
 }
 
-function inbox() {
+async function inbox() {
   const routineNames = Object.fromEntries(store.routines().map((r) => [r.id, r.name]));
   const entries = store
     .runs()
     .filter((r) => !r.ackedAt)
     .map((r) => ({ run: r, items: openItems(r) }))
     .filter(({ run, items }) => run.state === "needs_input" || run.state === "failed" || (run.state === "done" && items.length))
-    .map(({ run, items }) => ({
+    .map(async ({ run, items }) => ({
       runId: run.id,
       routineId: run.routineId,
       routineName: routineNames[run.routineId] ?? run.routineId,
       state: run.state,
       summary: run.summary ?? run.error,
       finishedAt: run.finishedAt,
-      items,
+      items: await withActions(run, items),
       threads: run.threads,
     }));
-  return { count: entries.length, entries };
+  return { count: entries.length, entries: await Promise.all(entries) };
+}
+
+// Done items keep their history but offer no actions.
+const withActions = (run, items) =>
+  Promise.all(items.map(async (i) => ({ ...i, actions: run.doneKeys?.includes(i.key) ? [] : await listActions(i, await contextFor(i, store.routine(run.routineId))) })));
+
+// The run is acked once no needs_you or code items remain open; a failed run waits for an explicit ack.
+function markDone(run, key) {
+  run.doneKeys = [...new Set([...(run.doneKeys ?? []), key])];
+  if (run.state !== "failed" && !openItems(run).length) run.ackedAt ??= new Date().toISOString();
+}
+
+function mustRun(id) {
+  const run = store.run(id);
+  if (!run) throw new HttpError(404, "no such run");
+  return run;
+}
+
+async function actionTarget(runId, key, actionId) {
+  const run = mustRun(runId);
+  const item = run.items.find((i) => i.key === key);
+  if (!item) throw new HttpError(404, "no such item in this run");
+  const ctx = await contextFor(item, store.routine(run.routineId));
+  const action = Object.hasOwn(ACTIONS, actionId) ? ACTIONS[actionId] : null;
+  if (!action?.appliesTo(item, ctx)) throw new HttpError(400, `${actionId} does not apply to this item`);
+  return { item, ctx, action };
+}
+
+async function preview([runId, key, actionId]) {
+  const { item, ctx, action } = await actionTarget(runId, key, actionId);
+  if (!action.confirm) throw new HttpError(400, `${actionId} has no preview`);
+  try {
+    return await action.confirm(item, ctx);
+  } catch (e) {
+    throw new HttpError(502, e.message);
+  }
+}
+
+// Failures come back as { ok: false, message } with gh's stderr, and are kept in the item's history.
+async function runAction([runId, key, actionId], body) {
+  const { item, ctx, action } = await actionTarget(runId, key, actionId);
+  if (!action.run) throw new HttpError(400, `${actionId} runs in the browser`);
+  let input;
+  try {
+    input = parseInput(body);
+  } catch (e) {
+    throw new HttpError(400, e.message);
+  }
+  let res;
+  try {
+    res = { ok: true, ...(await action.run(item, ctx, input)) };
+  } catch (e) {
+    res = { ok: false, message: e.message };
+  }
+  // Re-read after the await so a Done clicked meanwhile is not lost.
+  const run = mustRun(runId);
+  const it = run.items.find((i) => i.key === key);
+  it.history = [...(it.history ?? []), { action: actionId, at: new Date().toISOString(), ok: res.ok, message: res.message, ...(res.threadUrl && { threadUrl: res.threadUrl }) }];
+  if (res.threadId && !run.threads.some((t) => t.key === key)) run.threads.push({ key, threadId: res.threadId, url: res.threadUrl, reused: res.reused });
+  if (res.ok && action.done) markDone(run, key);
+  store.saveRun(run);
+  return res;
 }
 
 function mustRoutine(id) {
@@ -198,31 +261,46 @@ const routes = [
   [
     "GET",
     /^\/api\/runs\/([^/]+)$/,
-    ([id]) => {
-      const run = store.run(id);
-      if (!run) throw new HttpError(404, "no such run");
-      return { ...run, log: store.log(id) };
+    async ([id]) => {
+      const run = mustRun(id);
+      return { ...run, items: await withActions(run, run.items), log: store.log(id) };
     },
   ],
   [
     "POST",
     /^\/api\/runs\/([^/]+)\/ack$/,
     ([id], body) => {
-      const run = store.run(id);
-      if (!run) throw new HttpError(404, "no such run");
+      const run = mustRun(id);
       const key = body?.key;
-      if (key !== undefined) {
-        if (!run.items.some((i) => i.key === key)) throw new HttpError(400, "no such item in this run");
-        run.doneKeys = [...new Set([...(run.doneKeys ?? []), key])];
-      }
-      if (key === undefined || (run.state !== "failed" && !openItems(run).length)) run.ackedAt ??= new Date().toISOString();
+      if (key === undefined) run.ackedAt ??= new Date().toISOString();
+      else if (!run.items.some((i) => i.key === key)) throw new HttpError(400, "no such item in this run");
+      else markDone(run, key);
       store.saveRun(run);
       return run;
     },
   ],
+  [
+    "POST",
+    /^\/api\/runs\/([^/]+)\/rerun$/,
+    ([id]) => {
+      const r = mustRoutine(mustRun(id).routineId);
+      if (isRunning(r.id)) throw new HttpError(409, "already running");
+      return startRun(r, "manual");
+    },
+  ],
+  [
+    "GET",
+    /^\/api\/runs\/([^/]+)\/items\/([^/]+)\/actions$/,
+    async ([id, key]) => {
+      const run = mustRun(id);
+      const item = run.items.find((i) => i.key === key);
+      if (!item) throw new HttpError(404, "no such item in this run");
+      return (await withActions(run, [item]))[0].actions;
+    },
+  ],
+  ["POST", /^\/api\/runs\/([^/]+)\/items\/([^/]+)\/actions\/([^/]+)\/preview$/, preview],
+  ["POST", /^\/api\/runs\/([^/]+)\/items\/([^/]+)\/actions\/([^/]+)$/, runAction],
   ["GET", /^\/api\/inbox$/, () => inbox()],
-  ["GET", /^\/api\/import$/, (_, __, q) => importList(q.get("source"))],
-  ["POST", /^\/api\/import$/, (_, body) => importItems(body)],
   ["GET", /^\/api\/import$/, (_, __, q) => importList(q.get("source"))],
   ["POST", /^\/api\/import$/, (_, body) => importItems(body)],
   ["GET", /^\/api\/cron\/preview$/, (_, __, q) => cronPreview(q.get("expr") ?? "")],
