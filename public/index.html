@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoutineBar</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fafafa; --fg: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --card: #fff; --accent: #0a66d8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --fg: #f5f5f7; --muted: #98989d; --line: #3a3a3c; --card: #2c2c2e; --accent: #4c9cff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--fg); }
+  header { display: flex; align-items: center; gap: 24px; padding: 12px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  nav a { color: var(--muted); text-decoration: none; margin-right: 16px; padding: 4px 0; }
+  nav a.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
+  main { max-width: 980px; margin: 0 auto; padding: 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  input, select, textarea { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  textarea { width: 100%; min-height: 140px; font-family: ui-monospace, monospace; font-size: 12px; }
+  label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+  .running { background: #dbeafe; color: #1e40af; } .done { background: #dcfce7; color: #166534; }
+  .needs_input { background: #fef3c7; color: #92400e; } .failed { background: #fee2e2; color: #991b1b; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  tr.click { cursor: pointer; } tr.click:hover { background: var(--card); }
+  pre { white-space: pre-wrap; font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  .error { color: #d70015; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RoutineBar</h1>
+  <nav><a href="#inbox">Inbox</a><a href="#routines">Routines</a><a href="#runs">Runs</a></nav>
+</header>
+<main id="view"></main>
+<script>
+const $ = (sel, el = document) => el.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const when = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "");
+const badge = (state) => `<span class="badge ${state}">${state.replace("_", " ")}</span>`;
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "content-type": "application/json" } });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error);
+  return body;
+}
+
+const itemHtml = (i) => `<li>${i.url ? `<a href="${esc(i.url)}" target="_blank">${esc(i.title)}</a>` : esc(i.title)} <span class="muted">${esc(i.kind)}${i.note ? ` · ${esc(i.note)}` : ""}</span></li>`;
+const threadHtml = (t) => `<li><a href="${esc(t.url)}" target="_blank">T3 thread for ${esc(t.key)}</a>${t.reused ? ' <span class="muted">(existing)</span>' : ""}</li>`;
+
+const views = {
+  async inbox(el) {
+    const { entries } = await api("/api/inbox");
+    el.innerHTML = entries.length ? "" : '<p class="muted">Nothing needs you.</p>';
+    for (const e of entries) {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `<div class="row"><strong>${esc(e.routineName)}</strong>${badge(e.state)}<span class="muted grow">${when(e.finishedAt)}</span><a href="#runs/${esc(e.runId)}">details</a><button>Ack</button></div>
+        <p>${esc(e.summary)}</p>${e.items.length ? `<ul>${e.items.map(itemHtml).join("")}</ul>` : ""}${e.threads.length ? `<ul>${e.threads.map(threadHtml).join("")}</ul>` : ""}`;
+      $("button", card).onclick = async () => (await api(`/api/runs/${e.runId}/ack`, { method: "POST" }), render());
+      el.append(card);
+    }
+  },
+
+  async routines(el) {
+    const list = await api("/api/routines");
+    el.innerHTML = `<div class="row" style="margin-bottom:12px"><span class="grow"></span><a href="#edit/"><button class="primary">New routine</button></a></div>`;
+    for (const r of list) {
+      const card = document.createElement("div");
+      card.className = "card row";
+      card.innerHTML = `<input type="checkbox" ${r.enabled ? "checked" : ""} title="Enabled"><div class="grow"><strong>${esc(r.name)}</strong> <span class="muted">${esc(r.agent)} · ${esc(r.model)} · <code>${esc(r.schedule)}</code></span><div class="muted next"></div></div><button class="run">Run now</button><a href="#edit/${esc(r.id)}"><button>Edit</button></a>`;
+      $("input", card).onchange = async (ev) => (await api(`/api/routines/${r.id}`, { method: "PUT", body: JSON.stringify({ ...r, enabled: ev.target.checked }) }), render());
+      $(".run", card).onclick = async () => {
+        try { const run = await api(`/api/routines/${r.id}/run`, { method: "POST" }); location.hash = `#runs/${run.id}`; } catch (e) { alert(e.message); }
+      };
+      api(`/api/cron/preview?expr=${encodeURIComponent(r.schedule)}`).then((p) => ($(".next", card).textContent = `${p.description}. Next: ${r.enabled ? when(p.next[0]) : "disabled"}`));
+      el.append(card);
+    }
+  },
+
+  async runs(el, id) {
+    if (id) {
+      const run = await api(`/api/runs/${id}`);
+      el.innerHTML = `<div class="card"><div class="row"><strong>${esc(run.routineId)}</strong>${badge(run.state)}<span class="muted">${esc(run.trigger)} · ${when(run.startedAt)}${run.finishedAt ? ` to ${when(run.finishedAt)}` : ""}</span></div>
+        ${run.summary ? `<p>${esc(run.summary)}</p>` : ""}${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}
+        ${run.items.length ? `<ul>${run.items.map(itemHtml).join("")}</ul>` : ""}${run.threads.length ? `<ul>${run.threads.map(threadHtml).join("")}</ul>` : ""}
+        <label>Log</label><pre>${esc(run.log) || "(empty)"}</pre></div>`;
+      if (run.state === "running") setTimeout(() => location.hash === `#runs/${id}` && render(), 3000);
+      return;
+    }
+    const routines = await api("/api/routines");
+    const filter = new URLSearchParams(location.hash.split("?")[1]).get("routineId") ?? "";
+    const runs = await api(`/api/runs?limit=100${filter ? `&routineId=${encodeURIComponent(filter)}` : ""}`);
+    el.innerHTML = `<div class="row" style="margin-bottom:12px"><select><option value="">All routines</option>${routines.map((r) => `<option value="${esc(r.id)}" ${r.id === filter ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>
+      <table><tr><th>Started</th><th>Routine</th><th>Trigger</th><th>State</th><th>Summary</th></tr>
+      ${runs.map((r) => `<tr class="click" data-id="${esc(r.id)}"><td>${when(r.startedAt)}</td><td>${esc(r.routineId)}</td><td>${esc(r.trigger)}</td><td>${badge(r.state)}</td><td>${esc(r.summary ?? r.error ?? "")}</td></tr>`).join("")}</table>`;
+    $("select", el).onchange = (ev) => (location.hash = ev.target.value ? `#runs?routineId=${ev.target.value}` : "#runs");
+    el.querySelectorAll("tr.click").forEach((tr) => (tr.onclick = () => (location.hash = `#runs/${tr.dataset.id}`)));
+  },
+
+  async edit(el, id) {
+    const r = id ? (await api("/api/routines")).find((x) => x.id === id) : { enabled: false, schedule: "0 9 * * 1-5", agent: "claude", model: "opus", cwd: "", prompt: "", t3: { provider: "claudeAgent", model: "claude-opus-5-5", runtimeMode: "approval-required" } };
+    const opts = (list, v) => list.map((o) => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("");
+    el.innerHTML = `<form class="card">
+      <div class="grid">
+        <div><label>Id (slug)</label><input name="id" value="${esc(r.id)}" ${id ? "readonly" : ""} required pattern="[a-z0-9][a-z0-9-]*"></div>
+        <div><label>Name</label><input name="name" value="${esc(r.name)}" required></div>
+        <div><label>Agent</label><select name="agent">${opts(["claude", "codex", "custom"], r.agent)}</select></div>
+        <div><label>Model</label><input name="model" value="${esc(r.model)}" required></div>
+        <div><label>Working directory</label><input name="cwd" value="${esc(r.cwd)}" required placeholder="/Users/you/Projects"></div>
+        <div><label><input type="checkbox" name="enabled" ${r.enabled ? "checked" : ""}> Enabled</label></div>
+      </div>
+      <div id="commandRow"><label>Command (sh, gets $PROMPT and $MODEL)</label><input name="command" value="${esc(r.command)}" style="width:100%"></div>
+      <label>Schedule</label>
+      <div class="row">
+        <select id="preset">
+          <option value="minutes">Every N minutes</option><option value="hourly">Hourly at :MM</option><option value="daily">Daily at HH:MM</option>
+          <option value="weekdays">Weekdays at HH:MM</option><option value="weekly">Weekly on days at HH:MM</option><option value="custom">Custom</option>
+        </select>
+        <span id="pN">every <input id="n" type="number" min="1" max="59" value="30" style="width:64px"> min</span>
+        <span id="pMM">at :<input id="mm" type="number" min="0" max="59" value="0" style="width:64px"></span>
+        <span id="pDays">${DAYS.map((d, i) => `<label style="display:inline;font-weight:400"><input type="checkbox" class="day" value="${i}" ${i === 1 ? "checked" : ""}>${d}</label>`).join(" ")}</span>
+        <span id="pTime">at <input id="time" type="time" value="09:00"></span>
+      </div>
+      <div class="row" style="margin-top:8px"><input name="schedule" value="${esc(r.schedule)}" required style="font-family:ui-monospace,monospace;width:220px"><span id="preview" class="muted"></span></div>
+      <label>Prompt</label><textarea name="prompt">${esc(r.prompt)}</textarea>
+      <label>T3 thread for code items</label>
+      <div class="row"><select name="t3provider">${opts(["claudeAgent", "codex"], r.t3.provider)}</select><input name="t3model" value="${esc(r.t3.model)}"><select name="t3runtimeMode">${opts(["approval-required", "auto-accept-edits", "full-access"], r.t3.runtimeMode)}</select></div>
+      <p class="error" id="err"></p>
+      <div class="row"><button class="primary">Save</button><a href="#routines"><button type="button">Cancel</button></a><span class="grow"></span>${id ? '<button type="button" id="del">Delete</button>' : ""}</div>
+    </form>`;
+    const form = $("form", el);
+    const f = form.elements;
+    const showCommand = () => ($("#commandRow").style.display = f.agent.value === "custom" ? "" : "none");
+    f.agent.onchange = showCommand;
+    showCommand();
+
+    const presetFields = { minutes: ["pN"], hourly: ["pMM"], daily: ["pTime"], weekdays: ["pTime"], weekly: ["pDays", "pTime"], custom: [] };
+    const toCron = () => {
+      const [h, m] = $("#time").value.split(":").map(Number);
+      const days = [...el.querySelectorAll(".day:checked")].map((c) => c.value).join(",") || "1";
+      return { minutes: `*/${$("#n").value} * * * *`, hourly: `${$("#mm").value} * * * *`, daily: `${m} ${h} * * *`, weekdays: `${m} ${h} * * 1-5`, weekly: `${m} ${h} * * ${days}` }[$("#preset").value];
+    };
+    const showPreset = () => ["pN", "pMM", "pDays", "pTime"].forEach((p) => ($("#" + p).style.display = presetFields[$("#preset").value].includes(p) ? "" : "none"));
+    let seq = 0;
+    const preview = async () => {
+      const mine = ++seq;
+      const p = await api(`/api/cron/preview?expr=${encodeURIComponent(f.schedule.value)}`);
+      if (mine !== seq) return;
+      $("#preview").innerHTML = p.valid ? `${esc(p.description)}. Next: ${p.next.map(when).join("; ")}` : `<span class="error">${esc(p.error)}</span>`;
+    };
+    const fromPreset = () => {
+      showPreset();
+      if ($("#preset").value !== "custom") f.schedule.value = toCron();
+      preview();
+    };
+    $("#preset").onchange = fromPreset;
+    el.querySelectorAll("#pN input, #pMM input, #pDays input, #pTime input").forEach((i) => (i.oninput = fromPreset));
+    f.schedule.oninput = () => (($("#preset").value = "custom"), showPreset(), preview());
+    $("#preset").value = "custom";
+    showPreset();
+    preview();
+
+    form.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const body = {
+        name: f.name.value, enabled: f.enabled.checked, schedule: f.schedule.value, agent: f.agent.value, model: f.model.value,
+        command: f.command.value, cwd: f.cwd.value, prompt: f.prompt.value,
+        t3: { provider: f.t3provider.value, model: f.t3model.value, runtimeMode: f.t3runtimeMode.value },
+      };
+      try { await api(`/api/routines/${encodeURIComponent(f.id.value)}`, { method: "PUT", body: JSON.stringify(body) }); location.hash = "#routines"; } catch (e) { $("#err").textContent = e.message; }
+    };
+    if (id) $("#del").onclick = async () => confirm(`Delete ${r.name}?`) && (await api(`/api/routines/${id}`, { method: "DELETE" }), (location.hash = "#routines"));
+  },
+};
+
+async function render() {
+  const [route, arg] = (location.hash.slice(1).split("?")[0] || "inbox").split("/");
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${route === "edit" ? "routines" : route}`));
+  const el = $("#view");
+  try { await (views[route] ?? views.inbox)(el, arg && decodeURIComponent(arg)); } catch (e) { el.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+addEventListener("hashchange", render);
+render();
+setInterval(() => location.hash.startsWith("#inbox") || !location.hash ? render() : null, 30000);
+</script>
+</body>
+</html>
