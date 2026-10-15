@@ -7,10 +7,12 @@ import { canonicalKey } from "./inbox.mjs";
 
 const lastJsonLine = (text) => JSON.parse(text.trim().split("\n").findLast((l) => l.startsWith("{")) ?? "null");
 
-// cmd builds the agent process; result reads its final message (and session id) back from the phase's files.
+// cmd builds the agent process; repair resumes its session for one more turn; result reads the final message
+// (and session id) back from the phase's files.
 export const AGENTS = {
   claude: {
     cmd: (r) => ({ file: "claude", args: ["-p", r.prompt, "--model", r.model, "--dangerously-skip-permissions", "--output-format", "json"] }),
+    repair: (r, sessionId, prompt) => ({ file: "claude", args: ["-p", prompt, "--resume", sessionId, "--model", r.model, "--dangerously-skip-permissions", "--output-format", "json"] }),
     result: (f) => {
       const out = lastJsonLine(store.text(f.log));
       return { text: out?.result ?? "", sessionId: out?.session_id };
@@ -18,6 +20,7 @@ export const AGENTS = {
   },
   codex: {
     cmd: (r, f) => ({ file: "codex", args: ["exec", "-m", r.model, "--dangerously-bypass-approvals-and-sandbox", "-C", r.cwd, "-o", f.out, r.prompt] }),
+    repair: (r, sessionId, prompt, f) => ({ file: "codex", args: ["exec", "resume", "-m", r.model, "--dangerously-bypass-approvals-and-sandbox", "-o", f.out, sessionId, prompt] }),
     result: (f) => ({ text: store.text(f.out), sessionId: /session id: ([\w-]+)/.exec(store.text(f.err))?.[1] }),
   },
   custom: {
@@ -33,6 +36,7 @@ When you finish, end your reply with a fenced \`\`\`json block containing exactl
 Item is {"key": string, "title": string, "url"?: string, "kind": "needs_you" | "code" | "fyi", "note"?: string, "repoPath"?: string, "threadPrompt"?: string}.
 key is a stable id such as "pr:owner/repo#123" or "jira:SOF-42". "code" items get a coding-agent thread in repoPath (absolute path of a local clone) seeded with threadPrompt.
 Use "needs_input" when anything needs the user.`;
+const repairPrompt = (reason) => `Your reply did not end with a valid \`\`\`json block (${reason}).${CONTRACT}\n\nReply with only the json block summarizing the work you just did.`;
 
 const TRANSITIONS = { running: ["done", "needs_input", "failed"] };
 const KINDS = ["needs_you", "code", "fyi"];
@@ -150,17 +154,45 @@ async function linkThreads(routine, items) {
   return { threads, blocked };
 }
 
+const lastLines = (text, n) => String(text).split("\n").filter((l) => l.trim()).slice(-n).join("\n");
+
+// One repair turn in the same agent session before a missing or broken json block fails the run.
+// attempt(phase, sessionId, reason) resolves to { error } or { text, sessionId }, or null when the agent can't resume.
+export async function agentOutput(attempt) {
+  const first = await attempt("main");
+  if (first.error) return { error: first.error };
+  try {
+    return { out: parseOutput(first.text) };
+  } catch (e) {
+    const second = first.sessionId ? await attempt("repair", first.sessionId, e.message) : null;
+    if (second && !second.error) {
+      try {
+        return { out: parseOutput(second.text) };
+      } catch {}
+    }
+    return { error: `bad agent output: ${e.message}${second ? " (also after a repair turn)" : ""}`, tail: lastLines(first.text, 3) };
+  }
+}
+
+// Phases survive restarts: run.repaired marks that the live pid (if any) belongs to the repair turn.
+async function attempt(run, phase, sessionId, reason) {
+  const agent = AGENTS[run.agent];
+  if (phase === "repair" && !run.repaired) {
+    const routine = store.routine(run.routineId);
+    if (!agent.repair || !routine) return null;
+    const f = store.files(run.id, phase);
+    run.pid = spawnDetached(agent.repair(routine, sessionId, repairPrompt(reason), f), f, routine.cwd);
+    run.repaired = true;
+    store.saveRun(run);
+  }
+  if (phase === (run.repaired ? "repair" : "main")) await waitDead(run);
+  return readResult(run.agent, store.files(run.id, phase));
+}
+
 // The same path finishes a run this process started and one adopted from a previous server process.
 async function execute(run) {
-  await waitDead(run);
-  const res = readResult(run.agent, store.files(run.id));
-  if (res.error) return finish(run, "failed", { error: res.error });
-  let out;
-  try {
-    out = parseOutput(res.text);
-  } catch (e) {
-    return finish(run, "failed", { error: `bad agent output: ${e.message}` });
-  }
+  const { out, error, tail } = await agentOutput((...a) => attempt(run, ...a));
+  if (error) return finish(run, "failed", { error, ...(tail && { summary: tail }) });
   const routine = store.routine(run.routineId);
   if (!routine) return finish(run, "failed", { error: "routine was deleted" });
   const { threads, blocked } = await linkThreads(routine, out.items);

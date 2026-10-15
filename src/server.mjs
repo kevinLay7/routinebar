@@ -275,8 +275,9 @@ const routes = [
     /^\/api\/runs\/([^/]+)$/,
     async ([id]) => {
       const run = mustRun(id);
-      const f = store.files(id);
-      return { ...run, items: await withActions(run, run.items), log: store.text(f.log), err: store.text(f.err) };
+      const phases = run.repaired ? ["main", "repair"] : ["main"];
+      const text = (k) => phases.map((p) => (p === "main" ? "" : `\n--- repair turn ---\n`) + store.text(store.files(id, p)[k])).join("");
+      return { ...run, items: await withActions(run, run.items), log: text("log"), err: text("err") };
     },
   ],
   [

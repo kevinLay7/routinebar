@@ -42,6 +42,7 @@ type Item = {
 type Run = {
   id: string; routineId: string; trigger: "schedule" | "manual";
   agent: Agent; pid: number; // the detached agent's process (group leader)
+  repaired?: true;       // a repair turn ran
   state: RunState; startedAt: string; finishedAt?: string;
   summary?: string; items: Item[];
   threads: { key: string; threadId: string; url: string; reused: boolean }[];
@@ -53,7 +54,7 @@ Run lifecycle is a state machine: `running -> done | needs_input | failed`. Olde
 
 ## Agent contract
 
-The runner appends this to every prompt: the agent must end its reply with a fenced ```json block containing `{ "status": "done" | "needs_input", "summary": string, "items": Item[] }`. The runner parses the **last** ```json block in the output. Parse failure or non-zero exit makes the run `failed`, with the log kept.
+The runner appends this to every prompt: the agent must end its reply with a fenced ```json block containing `{ "status": "done" | "needs_input", "summary": string, "items": Item[] }`. The runner parses the **last** ```json block in the final message. Non-zero exit makes the run `failed`. A final message without a valid block gets one repair turn in the same agent session (claude `--resume <session_id>`, codex `exec resume <session id>`; custom has none) that restates the contract and asks for only the json block; the run records `repaired: true`. If that also fails, the run is `failed` and its `summary` holds the last 3 non-empty lines of the first final message. Repair output goes to `<runId>.repair.*` files.
 
 Agent registry (a table, not branches):
 - claude: `claude -p <prompt> --model <model> --dangerously-skip-permissions --output-format json`. The final message is `.result` of the last JSON line of stdout.
