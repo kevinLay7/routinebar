@@ -22,6 +22,7 @@ type Routine = {
   cwd: string;           // where the agent runs
   prompt: string;
   t3: { provider: "claudeAgent" | "codex"; model: string; runtimeMode: "approval-required" | "auto-accept-edits" | "full-access" };
+  importedFrom?: { source: string; sourceId: string; needsSchedule?: true }; // set by Import; needsSchedule clears on the next editor save
 };
 
 type RunState = "running" | "done" | "needs_input" | "failed";
@@ -82,6 +83,7 @@ Missed ticks while the Mac sleeps are skipped, not caught up.
 - `GET /api/models` returns `{ agents: { claude, codex, custom }, t3: { claudeAgent, codex } }` model suggestions, from `~/.t3/userdata/model-manifest.json` `currentModels` when readable.
 - `GET /cron.mjs` serves `src/cron.mjs` so the dashboard parses schedules with the same code.
 - `GET /api/inbox` returns `{ count, entries: [{ runId, routineName, state, summary, finishedAt, items: Item[] (needs_you and code only, minus doneKeys), threads }] }` for unacked runs in `needs_input` or `failed`, plus unacked `done` runs that have needs_you or code items. Newest first.
+- `GET /api/import[?source=]` returns `{ sources: [{ id, label, ok, error?, candidates: [Candidate & { imported }] }] }`. `POST /api/import` with `{ items: [{ source, sourceId }] }` re-lists those sources, creates routines from its own candidates, and returns the created routines. See Import.
 - `GET /api/cron/preview?expr=` returns `{ valid, description, next: string[5] }` or `{ valid: false, error }`.
 
 ## UI
@@ -90,11 +92,20 @@ Single `public/index.html` (vanilla JS + CSS, no build). It imports `/cron.mjs`,
 - **Inbox** (home): a sentence with the count and a breakdown, then rows grouped as Needs your review, Started in T3, and Failed runs (collapsed). Each row has one primary action (open the PR or link, open the T3 thread, or view the run) and Done, which marks that item done. J/K move, O opens, D marks done. Polls every 15 s and re-renders only when the data changed.
 - **Routines**: table with on/off switch, name, plain-English schedule, last run state and time, next run, Run now. A row opens the editor.
 - **Editor**: Basics, Schedule, Instructions, When code is needed (T3 provider, model, permissions), with a sticky save bar and an unsaved-changes guard. The id is derived from the name on create and fixed after. The schedule builder covers "at set times" (days and several times) and "on an interval" (every N minutes or hours, optional hours window, days), shows a sentence and the next 7 days, and keeps the raw cron under Advanced. Times with different minutes save as several expressions joined by "; ".
+- **Import** (Routines page): a sheet grouped by source, each loading on its own, with one checkbox row per candidate showing both schedules, agent and model, notes, and a collapsed prompt. Imported rows say "From <source>"; routines still needing a schedule carry a "Needs a schedule" chip in the table and the editor.
 - **Runs**: table of runs with state, filter by routine; detail shows state, start, duration, trigger, summary, items, threads, and the raw log behind a disclosure.
 
 ## Cron
 
 `src/cron.mjs`: parse 5 fields (minute hour dom month dow), with `*`, lists, ranges, steps, dow 0-7 (both 0 and 7 are Sunday). Standard dom/dow OR semantics when both are restricted. A schedule may hold several expressions separated by `;` (times with different minutes need this): it matches when any does, `nextRuns` merges and dedupes, `describe` joins with "; ". Exports `parseCron`, `matches(cron, date)`, `nextRuns(cron, from, n)`, `describe(cron)`. `src/cron.test.mjs` runs with `node --test` and asserts literal expected values.
+
+## Import
+
+`src/importers.mjs` is a registry of sources `{ id, label, list() }`, each returning Candidates `{ source, sourceId, name, prompt, schedule: string | null, sourceSchedule, agent, model, cwd, notes: string[] }`. A failing source returns `{ ok: false, error }` and the others still show. Sources are only read, never changed.
+- `claude-cloud`: `GET https://api.anthropic.com/v1/code/triggers` (beta `ccr-triggers-2026-01-30`) with the Claude Code OAuth token from the keychain. The UTC cron moves to local time at the current offset when minute and hour are plain numbers or lists (several expressions when only some hours cross midnight); otherwise it stays UTC with a note. cwd is a clone under ~/Projects named like the repo, else ~/Projects.
+- `claude-desktop`: `~/.claude/scheduled-tasks/*/SKILL.md`; no schedule is stored there.
+- `codex`: `~/.codex/automations/*/automation.toml`; `rrule` converts to cron for MINUTELY, HOURLY, DAILY and WEEKLY with INTERVAL, BYDAY, BYHOUR, BYMINUTE.
+Import is idempotent on `source + sourceId`. Imported routines start `enabled: false`; a candidate without a schedule gets `0 9 * * 1-5` and `importedFrom.needsSchedule`. The id comes from the name with the editor's slug rule, deduped.
 
 ## Seeds
 

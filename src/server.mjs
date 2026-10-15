@@ -6,6 +6,7 @@ import * as store from "./store.mjs";
 import { parseCron, matches, nextRuns, describe } from "./cron.mjs";
 import { AGENTS, startRun, isRunning, failInterrupted } from "./runner.mjs";
 import { seeds } from "./seeds.mjs";
+import { SOURCES, listSource } from "./importers.mjs";
 
 const PORT = Number(process.env.ROUTINEBAR_PORT || 4141);
 const INDEX = new URL("../public/index.html", import.meta.url);
@@ -43,6 +44,9 @@ function validateRoutine(id, b) {
   const cwd = str("cwd");
   if (!cwd.startsWith("/")) throw new HttpError(400, "cwd must be an absolute path");
   const t3 = b.t3 ?? {};
+  const from = b.importedFrom;
+  if (from !== undefined && (typeof from?.source !== "string" || typeof from.sourceId !== "string" || ![undefined, true].includes(from.needsSchedule)))
+    throw new HttpError(400, "importedFrom must be { source, sourceId, needsSchedule?: true }");
   return {
     id,
     name: str("name"),
@@ -62,7 +66,48 @@ function validateRoutine(id, b) {
       model: str("t3.model", t3.model),
       runtimeMode: oneOf("t3.runtimeMode", t3.runtimeMode, RUNTIME_MODES),
     },
+    ...(from && { importedFrom: { source: from.source, sourceId: from.sourceId, ...(from.needsSchedule && { needsSchedule: true }) } }),
   };
+}
+
+// Same slug rule as the dashboard editor.
+const slug = (s) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "routine";
+const importKey = (source, sourceId) => `${source}\n${sourceId}`;
+const importedKeys = () => new Set(store.routines().filter((r) => r.importedFrom).map((r) => importKey(r.importedFrom.source, r.importedFrom.sourceId)));
+
+async function importList(only) {
+  const sources = await Promise.all(SOURCES.filter((s) => !only || s.id === only).map(listSource));
+  const done = importedKeys();
+  return { sources: sources.map((s) => ({ ...s, candidates: s.candidates.map((c) => ({ ...c, imported: done.has(importKey(c.source, c.sourceId)) })) })) };
+}
+
+// Re-lists the sources server side so a client can only choose what to import, never what gets saved.
+async function importItems(body) {
+  const items = body?.items;
+  if (!Array.isArray(items) || items.some((i) => typeof i?.source !== "string" || typeof i?.sourceId !== "string")) throw new HttpError(400, "items must be [{ source, sourceId }]");
+  const wanted = new Set(items.map((i) => importKey(i.source, i.sourceId)));
+  const listed = await Promise.all(SOURCES.filter((s) => items.some((i) => i.source === s.id)).map(listSource));
+  const candidates = listed.flatMap((s) => s.candidates).filter((c) => wanted.has(importKey(c.source, c.sourceId)));
+  // Read and write after the awaits, in one synchronous step, so overlapping imports can't both add the same routine.
+  const list = store.routines();
+  const done = importedKeys();
+  const taken = new Set(["new", ...list.map((r) => r.id)]);
+  const t3 = { provider: "claudeAgent", model: models().t3.claudeAgent[0], runtimeMode: "approval-required" };
+  const created = [];
+  for (const c of candidates) {
+    const key = importKey(c.source, c.sourceId);
+    if (done.has(key)) continue;
+    done.add(key);
+    let id = slug(c.name);
+    for (let n = 2; taken.has(id); n++) id = `${slug(c.name)}-${n}`;
+    taken.add(id);
+    created.push({
+      id, name: c.name, enabled: false, schedule: c.schedule ?? "0 9 * * 1-5", agent: c.agent, model: c.model, cwd: c.cwd, prompt: c.prompt, t3,
+      importedFrom: { source: c.source, sourceId: c.sourceId, ...(!c.schedule && { needsSchedule: true }) },
+    });
+  }
+  if (created.length) store.saveRoutines([...list, ...created]);
+  return created;
 }
 
 function cronPreview(expr) {
@@ -176,6 +221,10 @@ const routes = [
     },
   ],
   ["GET", /^\/api\/inbox$/, () => inbox()],
+  ["GET", /^\/api\/import$/, (_, __, q) => importList(q.get("source"))],
+  ["POST", /^\/api\/import$/, (_, body) => importItems(body)],
+  ["GET", /^\/api\/import$/, (_, __, q) => importList(q.get("source"))],
+  ["POST", /^\/api\/import$/, (_, body) => importItems(body)],
   ["GET", /^\/api\/cron\/preview$/, (_, __, q) => cronPreview(q.get("expr") ?? "")],
 ];
 
