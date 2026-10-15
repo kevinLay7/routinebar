@@ -197,6 +197,19 @@
   .savebar .err { color: var(--failed); font-weight: 400; }
   .toast { position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 500; z-index: 9; }
   .toast:empty { display: none; }
+  .toast a { color: inherit; text-decoration: underline; margin-left: 6px; }
+
+  /* Item actions: overflow menu, inline errors, history */
+  .btn.more { width: 28px; padding: 0; color: var(--muted); }
+  .btn[aria-busy="true"] { cursor: progress; }
+  .menu { inset: auto; margin: 0; padding: 4px; min-width: 200px; border: 1px solid var(--line-strong); border-radius: var(--r-group); background: var(--surface); color: var(--text); }
+  .menu > * { display: block; width: 100%; padding: 6px 10px; border: 0; border-radius: var(--r-control); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
+  .menu > *:hover, .menu > *:focus-visible { background: var(--surface-2); text-decoration: none; outline: none; }
+  .menu > *:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .row-err { margin-top: 4px; font-size: var(--t-xs); display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .row-err .msg { color: var(--muted); font-family: var(--mono); overflow-wrap: anywhere; }
+  .history { margin-top: 6px; }
+  .history a { color: var(--muted); text-decoration: underline; }
 
   /* Import sheet: native dialog, bordered like a list container, dimmed page behind */
   dialog.sheet { width: min(760px, calc(100vw - 48px)); max-height: calc(100vh - 96px); margin: 48px auto auto; padding: 0; border: 1px solid var(--line); border-radius: var(--r-group); background: var(--bg); color: var(--text); overflow: hidden; }
@@ -236,6 +249,12 @@
 </header>
 <main id="view"></main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="menu" id="menu" popover role="menu" aria-label="More actions"></div>
+<dialog class="sheet" id="actSheet" aria-labelledby="actTitle">
+  <div class="sheet-head"><h2 id="actTitle"></h2><p id="actSub"></p></div>
+  <div class="sheet-body" id="actBody"></div>
+  <div class="sheet-foot"><span class="status" id="actStatus"></span><button type="button" class="btn quiet" id="actCancel">Cancel</button><button type="button" class="btn primary" id="actGo" disabled></button></div>
+</dialog>
 <dialog class="sheet" id="importSheet" aria-labelledby="impTitle">
   <div class="sheet-head"><h2 id="impTitle">Import routines</h2><p>From Claude and Codex on this Mac. Imported routines start off, and nothing changes at the source.</p></div>
   <div class="sheet-body" id="impBody"></div>
@@ -257,10 +276,10 @@ async function api(path, opts = {}) {
 const post = (path, body) => api(path, { method: "POST", body: body && JSON.stringify(body) });
 
 let toastTimer;
-function toast(msg) {
-  $("#toast").textContent = msg;
+function toast(msg, link) {
+  $("#toast").innerHTML = esc(msg) + (link ? `<a href="${esc(link)}" target="_blank" rel="noopener">Open thread</a>` : "");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => ($("#toast").textContent = ""), 3500);
+  toastTimer = setTimeout(() => ($("#toast").textContent = ""), link ? 8000 : 3500);
 }
 
 /* ---------- Time formatting ---------- */
@@ -414,37 +433,29 @@ function summaryLine({ review, t3, failed }) {
 }
 
 function inboxRow({ e, item, thread, key }) {
-  let title, note, primary;
-  if (thread) {
-    title = item.title; note = item.note;
-    primary = `<a class="btn primary" data-primary href="${esc(thread.url)}" target="_blank" rel="noopener">Open thread</a>`;
-  } else if (item) {
-    title = item.title; note = item.note;
-    primary = item.url
-      ? `<a class="btn primary" data-primary href="${esc(item.url)}" target="_blank" rel="noopener">${isPr(item) ? "Open PR" : "Open link"}</a>`
-      : `<a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a>`;
-  } else {
-    title = e.summary || "Run needs you";
-    primary = `<a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a>`;
-  }
+  const viewRun = `<a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a>`;
+  const title = item ? item.title : e.summary || "Run needs you";
+  const note = item?.note;
+  const actions = item ? itemActions(e.runId, item, viewRun, thread?.url) : `${viewRun}`;
   const meta = [
     thread && `<span>${thread.reused ? "Existing thread" : "Thread started"}</span>`,
     thread && item.url && `<a href="${esc(item.url)}" target="_blank" rel="noopener">${isPr(item) ? "PR" : "Link"}</a>`,
     `<a href="#runs/${esc(e.runId)}">${esc(e.routineName)}</a>`,
     e.finishedAt && `<span>${timeEl(e.finishedAt)}</span>`,
   ].filter(Boolean).join("");
-  return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="${esc(item?.key ?? "")}">
+  return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="${esc(item?.key ?? "")}" data-open="${esc(thread?.url ?? item?.url ?? `#runs/${e.runId}`)}">
     <div class="row-main">
       <div class="row-title">${esc(title)}</div>
       ${note ? `<div class="row-note">${esc(note)}</div>` : ""}
       <div class="row-meta">${meta}</div>
+      ${rowError(key)}
     </div>
-    <div class="row-actions">${primary}<button class="btn" data-done>Done</button></div>
+    <div class="row-actions">${actions}<button class="btn" data-done>Done</button></div>
   </li>`;
 }
 
 function failedRow({ e, key }) {
-  return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="">
+  return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="" data-open="#runs/${esc(e.runId)}">
     <div class="row-main">
       <div class="row-title">${esc(e.routineName)}</div>
       <div class="row-note mono">${esc(e.summary || "Failed")}</div>
@@ -453,6 +464,152 @@ function failedRow({ e, key }) {
     <div class="row-actions"><a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a><button class="btn" data-done>Done</button></div>
   </li>`;
 }
+
+/* ---------- Item actions ----------
+   Each item from the API carries its applicable actions, one marked primary. The row shows that one as its
+   primary verb and the rest in one shared popover menu. Items are kept by "runId|itemKey" for the handlers. */
+const rowItems = new Map();
+const rowErrors = new Map();
+const actionUrl = (runId, key, id) => `/api/runs/${encodeURIComponent(runId)}/items/${encodeURIComponent(key)}/actions/${id}`;
+const rowOf = (el) => el.closest(".row");
+const itemOf = (row) => rowItems.get(`${row.dataset.run}|${row.dataset.item}`);
+const actionBtn = (a, attrs) => a.href
+  ? `<a ${attrs} data-action="${a.id}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
+  : `<button type="button" ${attrs} data-action="${a.id}">${esc(a.label)}</button>`;
+
+function itemActions(runId, item, fallback = "", threadUrl) {
+  rowItems.set(`${runId}|${item.key}`, item);
+  const main = threadUrl ? null : item.actions.find((a) => a.primary);
+  const primary = threadUrl ? `<a class="btn primary" data-primary href="${esc(threadUrl)}" target="_blank" rel="noopener">Open thread</a>` : main ? actionBtn(main, `class="btn primary" data-primary`) : fallback;
+  const more = item.actions.length > (main ? 1 : 0) ? `<button type="button" class="btn quiet more" data-more aria-haspopup="menu" aria-expanded="false" aria-label="More actions" title="More actions (A)">⋯</button>` : "";
+  return primary + more;
+}
+
+function rowError(key) {
+  const err = rowErrors.get(key);
+  return err ? `<div class="row-err" role="alert"><span class="state failed">${esc(err.label)} failed</span><span class="msg">${esc(err.message)}</span></div>` : "";
+}
+
+const menu = $("#menu");
+let menuOwner = null;
+function openMenu(btn) {
+  const row = rowOf(btn), item = itemOf(row);
+  const shown = $("[data-primary]", row)?.dataset.action;
+  menu.innerHTML = item.actions.filter((a) => a.id !== shown).map((a) => actionBtn({ ...a, label: a.label + (a.needsConfirm ? "…" : "") }, `role="menuitem"`)).join("");
+  menuOwner = btn;
+  btn.setAttribute("aria-expanded", "true");
+  menu.showPopover();
+  const r = btn.getBoundingClientRect();
+  menu.style.top = `${Math.max(8, r.bottom + 4 + menu.offsetHeight > innerHeight ? r.top - 4 - menu.offsetHeight : r.bottom + 4)}px`;
+  menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+  menu.firstElementChild?.focus();
+}
+menu.addEventListener("toggle", (ev) => {
+  if (ev.newState !== "closed" || !menuOwner) return;
+  menuOwner.setAttribute("aria-expanded", "false");
+  if (!document.activeElement || document.activeElement === document.body || menu.contains(document.activeElement)) menuOwner.focus();
+});
+menu.addEventListener("click", (ev) => {
+  const el = ev.target.closest("a, button");
+  if (!el) return;
+  const owner = menuOwner;
+  menu.hidePopover();
+  if (el.tagName === "BUTTON") trigger(rowOf(owner), el.dataset.action, owner);
+});
+menu.addEventListener("keydown", (ev) => {
+  const items = [...menu.children], i = items.indexOf(document.activeElement);
+  if (ev.key === "ArrowDown") items[(i + 1) % items.length].focus();
+  else if (ev.key === "ArrowUp") items.at(i - 1).focus();
+  else if (ev.key === "Home") items[0].focus();
+  else if (ev.key === "End") items.at(-1).focus();
+  else if (ev.key === "Tab") menu.hidePopover();
+  else return;
+  ev.preventDefault();
+});
+addEventListener("scroll", () => menu.matches(":popover-open") && menu.hidePopover(), { passive: true });
+
+function trigger(row, id, btn) {
+  const a = itemOf(row).actions.find((x) => x.id === id);
+  return a.needsConfirm ? openConfirm(row, a) : execute(row, a, {}, btn);
+}
+
+async function execute(row, a, input, btn) {
+  const { run: runId, item: key } = row.dataset;
+  const rowKey = row.dataset.key;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
+  btn.textContent = btn.classList.contains("more") ? "…" : `${a.label}…`;
+  let res;
+  try { res = await post(actionUrl(runId, key, a.id), input); } catch (e) { res = { ok: false, message: e.message }; }
+  btn.disabled = false;
+  btn.removeAttribute("aria-busy");
+  btn.textContent = label;
+  if (res.ok) { rowErrors.delete(rowKey); toast(res.reused ? "Opened the existing thread" : res.message, res.threadUrl); }
+  else rowErrors.set(rowKey, { label: ACTION_LABEL[a.id] ?? a.label, message: res.message });
+  await render();
+  $$(".row").find((r) => r.dataset.key === rowKey)?.focus();
+  return res;
+}
+
+const PR_STATE = { OPEN: "Open", MERGED: "Merged", CLOSED: "Closed" };
+const REVIEW = { APPROVED: "Approved", CHANGES_REQUESTED: "Changes requested", REVIEW_REQUIRED: "Review required" };
+const MERGE_STATE = { CLEAN: "Ready to merge", HAS_HOOKS: "Ready to merge", UNSTABLE: "Mergeable, some checks not passing", BLOCKED: "Blocked by branch rules", BEHIND: "Behind the base branch", DIRTY: "Has conflicts", DRAFT: "Draft", UNKNOWN: "Not computed yet" };
+const METHOD = { squash: "Squash and merge", merge: "Create a merge commit", rebase: "Rebase and merge" };
+function checksHtml({ passed, failed, pending }) {
+  const parts = [failed && `<span class="state failed">${failed} failed</span>`, pending && `<span class="state running">${pending} pending</span>`, passed && `<span class="state done">${passed} passed</span>`].filter(Boolean);
+  return parts.length ? `<span class="inline" style="gap:var(--s3)">${parts.join("")}</span>` : `<span class="subtle">No checks</span>`;
+}
+
+async function openConfirm(row, a) {
+  const sheet = $("#actSheet"), body = $("#actBody"), go = $("#actGo"), status = $("#actStatus");
+  const item = itemOf(row);
+  $("#actTitle").textContent = a.id === "merge" ? "Merge pull request" : a.id === "approve" ? "Approve pull request" : a.label;
+  $("#actSub").textContent = item.title;
+  body.innerHTML = `<p><span class="state running">Checking live status</span></p>`;
+  status.textContent = "";
+  go.textContent = a.id === "merge" ? "Merge" : a.id === "approve" ? "Approve" : "Start thread";
+  go.disabled = true;
+  $("#actCancel").onclick = () => sheet.close();
+  sheet.showModal();
+  let p;
+  try { p = await post(`${actionUrl(row.dataset.run, item.key, a.id)}/preview`); } catch (e) { body.innerHTML = ""; status.innerHTML = `<span class="state failed">Couldn't load</span> ${esc(e.message)}`; return; }
+  if (p.needsPath) {
+    body.innerHTML = `<div class="field" style="margin-bottom:var(--s5)"><label for="actPath">Local repo</label><input id="actPath" class="wide mono-in" placeholder="/Users/you/Projects/repo" spellcheck="false" autocomplete="off"><span class="help">No local clone was found under ~/Projects. Enter the absolute path of a git repo for the thread.</span></div>`;
+  } else if (p.reuse || p.repoPath) {
+    body.innerHTML = `<p style="margin:0 0 var(--s5)">${p.reuse ? "This item already has a thread; it opens again." : `The thread opens in <span class="mono">${esc(p.repoPath)}</span>.`}</p>`;
+  } else {
+    body.innerHTML = `<dl class="sched" style="margin:0 0 var(--s5);row-gap:var(--s2)">
+      <dt>Pull request</dt><dd><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> <span class="muted mono">${esc(p.headRefName)}</span></dd>
+      <dt>State</dt><dd>${esc(PR_STATE[p.state] ?? p.state)}${p.isDraft ? ", draft" : ""}</dd>
+      <dt>Checks</dt><dd>${checksHtml(p.checks)}</dd>
+      <dt>Review</dt><dd>${esc(REVIEW[p.reviewDecision] ?? "No review yet")}</dd>
+      <dt>Mergeable</dt><dd>${esc(MERGE_STATE[p.mergeStateStatus] ?? p.mergeStateStatus)}</dd>
+      ${a.id === "merge" ? `<dt><label for="actMethod">Method</label></dt><dd>${p.methods.length ? `<select id="actMethod">${p.methods.map((m) => `<option value="${m}" ${m === p.method ? "selected" : ""}>${METHOD[m]}</option>`).join("")}</select>` : `<span class="subtle">This repo allows no merge method</span>`}</dd>` : ""}
+    </dl>`;
+    if (p.blocked || (a.id === "merge" && !p.methods.length)) {
+      status.innerHTML = `<span class="state needs_input">Can't ${a.id}</span> ${esc(p.blocked ? `${p.blocked[0].toUpperCase()}${p.blocked.slice(1)}.` : "")}`;
+      if ($("#actMethod")) $("#actMethod").disabled = true;
+      return;
+    }
+  }
+  go.disabled = false;
+  go.onclick = async () => {
+    const input = a.id === "merge" ? { method: $("#actMethod").value } : p.needsPath ? { repoPath: $("#actPath").value.trim() } : {};
+    status.textContent = "";
+    const res = await execute(row, a, input, go);
+    if (res.ok) sheet.close();
+    else status.innerHTML = `<span class="state failed">Failed</span> ${esc(res.message)}`;
+  };
+  ($("#actPath") ?? go).focus();
+}
+
+document.addEventListener("click", (ev) => {
+  const more = ev.target.closest("[data-more]");
+  if (more) return openMenu(more);
+  const act = ev.target.closest(".row button[data-action]");
+  if (act) trigger(rowOf(act), act.dataset.action, act);
+});
 
 views.inbox = async (el, _, { poll } = {}) => {
   const data = await api("/api/inbox");
@@ -477,7 +634,7 @@ views.inbox = async (el, _, { poll } = {}) => {
     ${m.review.length ? `<section class="group"><h2 class="group-head caps">Needs your review</h2><ul class="list">${m.review.map(inboxRow).join("")}</ul></section>` : ""}
     ${m.t3.length ? `<section class="group"><h2 class="group-head caps">Started in T3</h2><ul class="list">${m.t3.map(inboxRow).join("")}</ul></section>` : ""}
     ${m.failed.length ? `<details class="group" ${failedOpen ? "open" : ""}><summary><span class="caps">Failed runs</span><span class="subtle">${m.failed.length}</span></summary><ul class="list">${m.failed.map(failedRow).join("")}</ul></details>` : ""}
-    <p class="hint"><span class="kbd">J</span> <span class="kbd">K</span> move, <span class="kbd">O</span> open, <span class="kbd">D</span> done</p>`;
+    <p class="hint"><span class="kbd">J</span> <span class="kbd">K</span> move, <span class="kbd">O</span> open, <span class="kbd">Enter</span> main action, <span class="kbd">A</span> more actions, <span class="kbd">D</span> done</p>`;
   const det = $("details.group", el);
   if (det) det.ontoggle = () => (failedOpen = det.open);
   if (focusKey) $$(".row", el).find((r) => r.dataset.key === focusKey)?.focus();
@@ -504,6 +661,7 @@ document.addEventListener("click", (ev) => {
   if (done) markDone(done.closest(".row"));
 });
 document.addEventListener("keydown", (ev) => {
+  if (ev.target.closest?.("#menu, dialog")) return;
   if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.target.closest("input, textarea, select, [contenteditable]")) return;
   if (route() !== "inbox") return;
   const rows = $$(".row").filter((r) => r.offsetParent);
@@ -513,11 +671,16 @@ document.addEventListener("keydown", (ev) => {
   const k = ev.key.toLowerCase();
   if (k === "j" || ev.key === "ArrowDown") (rows[i + 1] ?? rows[i < 0 ? 0 : i])?.focus();
   else if (k === "k" || ev.key === "ArrowUp") (rows[i - 1] ?? rows[0]).focus();
-  else if (cur && (k === "o" || (ev.key === "Enter" && ev.target === cur))) $("[data-primary]", cur).click();
+  else if (cur && ev.key === "Enter" && ev.target === cur) $("[data-primary]", cur).click();
+  else if (cur && k === "o") openRow(cur);
+  else if (cur && k === "a" && $("[data-more]", cur)) $("[data-more]", cur).click();
   else if (cur && k === "d") markDone(cur);
   else return;
   ev.preventDefault();
 });
+
+// O opens the thing a row is about: its thread, else its link, else its run.
+const openRow = ({ dataset: { open: url } }) => (url.startsWith("#") ? (location.hash = url) : window.open(url, "_blank", "noopener"));
 
 /* Routines */
 views.routines = async (el, id) => {
@@ -653,13 +816,15 @@ views.runs = async (el, id) => {
 };
 
 const KIND = { needs_you: "Needs you", code: "Code", fyi: "FYI" };
+const ACTION_LABEL = { merge: "Merge", approve: "Approve", "rerun-checks": "Re-run checks", "review-in-t3": "Review in T3", "start-in-t3": "Start in T3", "address-comments": "Address comments", "move-to-t3": "Move to T3" };
+const historyHtml = (h = []) => h.length ? `<ul class="notes history">${h.map((x) => `<li>${esc(ACTION_LABEL[x.action] ?? x.action)}${x.ok ? "" : " failed"}: ${esc(x.message)} · ${timeEl(x.at)}${x.threadUrl ? ` · <a href="${esc(x.threadUrl)}" target="_blank" rel="noopener">Thread</a>` : ""}</li>`).join("")}</ul>` : "";
 async function runDetail(el, id) {
   const [run, routines] = await Promise.all([api(`/api/runs/${encodeURIComponent(id)}`), api("/api/routines")]);
   const r = routines.find((x) => x.id === run.routineId);
   const done = new Set(run.doneKeys ?? []);
   el.innerHTML = `
     <a class="back" href="#runs">← Runs</a>
-    <div class="page-head"><div class="grow"><h1 class="headline">${r ? `<a href="#routines/${esc(r.id)}" style="color:inherit">${esc(r.name)}</a>` : esc(run.routineId)}</h1></div>${state(run.state, true)}</div>
+    <div class="page-head"><div class="grow"><h1 class="headline">${r ? `<a href="#routines/${esc(r.id)}" style="color:inherit">${esc(r.name)}</a>` : esc(run.routineId)}</h1></div>${state(run.state, true)}${r ? `<button type="button" class="btn" id="again">Run again</button>` : ""}</div>
     <div class="facts">
       <div><span class="caps">Started</span><span>${esc(absTime(run.startedAt))} <span class="muted">(${timeEl(run.startedAt)})</span></span></div>
       <div><span class="caps">Duration</span><span>${run.finishedAt ? duration(run.startedAt, run.finishedAt) : `<span class="muted">still running</span>`}</span></div>
@@ -668,16 +833,21 @@ async function runDetail(el, id) {
     </div>
     ${run.summary ? `<p class="summary">${esc(run.summary)}</p>` : ""}
     ${run.error ? `<div class="error-box">${esc(run.error)}</div>` : ""}
-    ${run.items.length ? `<section class="group"><h2 class="group-head caps">Items</h2><ul class="list">${run.items.map((i) => `<li class="row${done.has(i.key) ? " is-done" : ""}">
+    ${run.items.length ? `<section class="group"><h2 class="group-head caps">Items</h2><ul class="list">${run.items.map((i) => `<li class="row${done.has(i.key) ? " is-done" : ""}" data-key="${esc(`${run.id}|${i.key}`)}" data-run="${esc(run.id)}" data-item="${esc(i.key)}">
       <span class="kind caps">${KIND[i.kind] ?? esc(i.kind)}</span>
       <div class="row-main"><div class="row-title">${i.url ? `<a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.title)}</a>` : esc(i.title)}</div>
         ${i.note ? `<div class="row-note">${esc(i.note)}</div>` : ""}
-        <div class="row-meta"><span class="mono">${esc(i.key)}</span>${i.repoPath ? `<span class="mono">${esc(i.repoPath)}</span>` : ""}${done.has(i.key) ? "<span>Done</span>" : ""}</div></div>
+        <div class="row-meta"><span class="mono">${esc(i.key)}</span>${i.repoPath ? `<span class="mono">${esc(i.repoPath)}</span>` : ""}${done.has(i.key) ? "<span>Done</span>" : ""}</div>
+        ${rowError(`${run.id}|${i.key}`)}${historyHtml(i.history)}</div>
+      ${i.actions.length ? `<div class="row-actions">${itemActions(run.id, i, "", run.threads.find((t) => t.key === i.key)?.url)}</div>` : ""}
     </li>`).join("")}</ul></section>` : ""}
     ${run.threads.length ? `<section class="group"><h2 class="group-head caps">T3 threads</h2><ul class="list">${run.threads.map((t) => `<li class="row">
       <div class="row-main"><div class="row-title mono" style="font-size:var(--t-sm)">${esc(t.key)}</div><div class="row-meta"><span>${t.reused ? "Existing thread, linked again" : "New thread"}</span></div></div>
       <div class="row-actions"><a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">Open thread</a></div></li>`).join("")}</ul></section>` : ""}
     <details class="disclosure"><summary>Raw log</summary><pre class="log">${esc(run.log) || "(empty)"}</pre></details>`;
+  if (r) $("#again", el).onclick = async () => {
+    try { location.hash = `#runs/${(await post(`/api/runs/${encodeURIComponent(run.id)}/rerun`)).id}`; } catch (e) { toast(e.message === "already running" ? `${r.name} is already running` : e.message); }
+  };
   if (run.state === "running") setTimeout(() => location.hash === `#runs/${id}` && render(), 3000);
 }
 
@@ -940,7 +1110,8 @@ render();
 async function refreshCount() {
   try { $("#inboxCount").textContent = summaryLine(inboxModel((await api("/api/inbox")).entries))?.total ?? ""; } catch {}
 }
-setInterval(() => (route() === "inbox" ? render({ poll: true }) : refreshCount()), 15e3);
+// A poll never repaints under an open menu or dialog.
+setInterval(() => (route() === "inbox" && !menu.matches(":popover-open") && !$("dialog[open]") ? render({ poll: true }) : refreshCount()), 15e3);
 </script>
 </body>
 </html>

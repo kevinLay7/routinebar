@@ -34,6 +34,7 @@ type Item = {
   note?: string;
   repoPath?: string;     // code items: local repo for the T3 thread; falls back to routine.cwd
   threadPrompt?: string; // code items: instructions for the T3 thread
+  history?: { action: string; at: string; ok: boolean; message: string; threadUrl?: string }[]; // one entry per item action attempt
 };
 type Run = {
   id: string; routineId: string; trigger: "schedule" | "manual";
@@ -82,6 +83,8 @@ Missed ticks while the Mac sleeps are skipped, not caught up.
 - `POST /api/runs/:id/ack` acks the run. With body `{ key }` it marks one item done instead; the run is acked once no needs_you or code items remain open.
 - `GET /api/models` returns `{ agents: { claude, codex, custom }, t3: { claudeAgent, codex } }` model suggestions, from `~/.t3/userdata/model-manifest.json` `currentModels` when readable.
 - `GET /cron.mjs` serves `src/cron.mjs` so the dashboard parses schedules with the same code.
+- `POST /api/runs/:id/rerun` starts the run's routine again (409 when it is running).
+- `GET /api/runs/:id/items/:key/actions` lists applicable actions `[{ id, label, needsConfirm, primary, href? }]`; `POST .../actions/:action/preview` returns the confirm preview; `POST .../actions/:action` with optional `{ method?, repoPath? }` runs it and returns `{ ok, message, threadUrl?, reused? }`. Keys are URL-encoded. Inbox items and `GET /api/runs/:id` items carry the same `actions` list. See Item actions.
 - `GET /api/inbox` returns `{ count, entries: [{ runId, routineName, state, summary, finishedAt, items: Item[] (needs_you and code only, minus doneKeys), threads }] }` for unacked runs in `needs_input` or `failed`, plus unacked `done` runs that have needs_you or code items. Newest first.
 - `GET /api/import[?source=]` returns `{ sources: [{ id, label, ok, error?, candidates: [Candidate & { imported }] }] }`. `POST /api/import` with `{ items: [{ source, sourceId }] }` re-lists those sources, creates routines from its own candidates, and returns the created routines. See Import.
 - `GET /api/cron/preview?expr=` returns `{ valid, description, next: string[5] }` or `{ valid: false, error }`.
@@ -89,11 +92,20 @@ Missed ticks while the Mac sleeps are skipped, not caught up.
 ## UI
 
 Single `public/index.html` (vanilla JS + CSS, no build). It imports `/cron.mjs`, so the browser parses schedules with the server's code. Design direction and decisions: `design/DIRECTION.md`.
-- **Inbox** (home): a sentence with the count and a breakdown, then rows grouped as Needs your review, Started in T3, and Failed runs (collapsed). Each row has one primary action (open the PR or link, open the T3 thread, or view the run) and Done, which marks that item done. J/K move, O opens, D marks done. Polls every 15 s and re-renders only when the data changed.
+- **Inbox** (home): a sentence with the count and a breakdown, then rows grouped as Needs your review, Started in T3, and Failed runs (collapsed). Each row has one primary action (merge a ready own PR, review a requested PR in T3, start a Jira ticket in T3, address comments on an own PR, else open the thread, PR, link, or run), an overflow menu with the other actions, and Done. Actions needing confirmation open a sheet with the live preview. J/K move, O opens, Enter runs the primary action, A opens the menu, D marks done. Polls every 15 s and re-renders only when the data changed.
 - **Routines**: table with on/off switch, name, plain-English schedule, last run state and time, next run, Run now. A row opens the editor.
 - **Editor**: Basics, Schedule, Instructions, When code is needed (T3 provider, model, permissions), with a sticky save bar and an unsaved-changes guard. The id is derived from the name on create and fixed after. The schedule builder covers "at set times" (days and several times) and "on an interval" (every N minutes or hours, optional hours window, days), shows a sentence and the next 7 days, and keeps the raw cron under Advanced. Times with different minutes save as several expressions joined by "; ".
 - **Import** (Routines page): a sheet grouped by source, each loading on its own, with one checkbox row per candidate showing both schedules, agent and model, notes, and a collapsed prompt. Imported rows say "From <source>"; routines still needing a schedule carry a "Needs a schedule" chip in the table and the editor.
-- **Runs**: table of runs with state, filter by routine; detail shows state, start, duration, trigger, summary, items, threads, and the raw log behind a disclosure.
+- **Runs**: table of runs with state, filter by routine; detail shows state, start, duration, trigger, summary, items (with their actions and history), threads, the raw log behind a disclosure, and Run again.
+
+## Item actions
+
+`src/actions.mjs` is a registry `{ [id]: { label, appliesTo(item, ctx), primary?, confirm?, run(item, ctx, input), done? } }` where `ctx = { routine, ref, mine }`: `ref` comes from one key parser (`pr:owner/repo#n`, `jira:KEY`, other) and `mine` says whether the current gh user wrote the PR (null when gh can't tell). Registry order is priority: the first applicable entry whose `primary` holds is the row's primary verb.
+- PR: `open`, `address-comments` (T3), `rerun-checks` (`gh run rerun <id> --failed` for each failed Actions run in `gh pr checks`).
+- Review request (needs_you PR by someone else): `review-in-t3` (drafts comments, posts nothing), `approve` (confirm).
+- Own PR: `merge` (confirm shows live state, checks, review, mergeability and the repo's allowed methods; blocked when not open or draft; squash by default).
+- Jira: `open`, `start-in-t3`. Any item: `move-to-t3`.
+T3 actions reuse the runner's `seen.json` key `routineId:item.key`, so an item gets at most one thread whichever action makes it. The repo is `item.repoPath`, else a clone under ~/Projects named like the repo, else the user enters a path (must be a git repo). Every attempt appends to the item's `history`; a successful merge or approve marks the item done. gh runs as `$ROUTINEBAR_GH` (default `gh`) with the login PATH; its stderr is the failure message.
 
 ## Cron
 
