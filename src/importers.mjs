@@ -78,7 +78,7 @@ export function parseCodexToml(text) {
 const readText = (file) => (existsSync(file) ? readFileSync(file, "utf8") : null);
 const subdirs = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : []);
 
-function localClone(url) {
+export function localClone(url) {
   const name = basename(url).replace(/\.git$/, "").toLowerCase();
   const hit = subdirs(PROJECTS).find((d) => d.toLowerCase() === name);
   return hit ? join(PROJECTS, hit) : null;

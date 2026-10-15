@@ -23,8 +23,8 @@ const TRANSITIONS = { running: ["done", "needs_input", "failed"] };
 const KINDS = ["needs_you", "code", "fyi"];
 const TIMEOUT = 30 * 60e3;
 
-let loginPath;
-const path = () => (loginPath ??= execFileSync("zsh", ["-lc", "echo $PATH"], { encoding: "utf8" }).trim());
+let pathCache;
+export const loginPath = () => (pathCache ??= execFileSync("zsh", ["-lc", "echo $PATH"], { encoding: "utf8" }).trim());
 
 function notify(title, body) {
   execFile("osascript", ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", title, body], () => {});
@@ -64,7 +64,7 @@ function exec({ file, args, env }, cwd, logFile) {
     const log = createWriteStream(logFile);
     let stdout = "";
     let error;
-    const child = spawn(file, args, { cwd, env: { ...process.env, PATH: path(), ...env }, timeout: TIMEOUT, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd, env: { ...process.env, PATH: loginPath(), ...env }, timeout: TIMEOUT, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (c) => ((stdout += c), log.write(c)));
     child.stderr.on("data", (c) => log.write(c));
     child.on("error", (e) => (error = e.message));
