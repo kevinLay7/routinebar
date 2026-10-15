@@ -7,7 +7,10 @@ Local scheduler for agent routines on macOS. Node 24, zero npm dependencies. One
 - `routines.json`: array of Routine.
 - `runs/<runId>.json`: one file per Run. Only the process running that run writes it.
 - `logs/<runId>.log`: raw agent stdout+stderr.
-- `seen.json`: `{ [routineId + ":" + item.key]: { threadId, url, createdAt } }`. Dedupes T3 threads across runs.
+- `seen.json`: `{ [routineId + ":" + canonicalKey(item)]: { threadId, url, createdAt } }`. Dedupes T3 threads across runs.
+- `dismissed.json`: `{ [routineId + ":" + canonicalKey(item)]: fingerprint }` for items marked done, where fingerprint hashes the item's kind and note, so an item comes back only when the agent reports something new about it. Run-level rows use `routineId:failed` and `routineId:run` with the run id as the value.
+
+`canonicalKey(item)` (`src/inbox.mjs`) is the one item identity: `pr:owner/repo#n` (lowercased) from a GitHub PR url or a `pr:` key, else `jira:KEY` from a Jira key in the key or url, else the agent's key. The runner stores items under it and drops later duplicates within a run.
 
 ```ts
 type Agent = "claude" | "codex" | "custom";
@@ -41,12 +44,11 @@ type Run = {
   state: RunState; startedAt: string; finishedAt?: string;
   summary?: string; items: Item[];
   threads: { key: string; threadId: string; url: string; reused: boolean }[];
-  error?: string; ackedAt?: string;
-  doneKeys?: string[];   // items marked done one at a time from the inbox
+  error?: string;
 };
 ```
 
-Run lifecycle is a state machine: `running -> done | needs_input | failed`. Acking sets `ackedAt` and removes the run from the inbox. On startup, any run left `running` by a dead process becomes `failed` with error "interrupted".
+Run lifecycle is a state machine: `running -> done | needs_input | failed`. Older run files with `ackedAt` or `doneKeys` are moved into `dismissed.json` on startup. On startup, any run left `running` by a dead process becomes `failed` with error "interrupted".
 
 ## Agent contract
 
@@ -80,12 +82,12 @@ Missed ticks while the Mac sleeps are skipped, not caught up.
 - `GET /api/routines` (each with `lastRun: {id, state, startedAt, finishedAt} | null` and `nextRun: ISO | null`), `PUT /api/routines/:id` (upsert, validate at this boundary), `DELETE /api/routines/:id`
 - `POST /api/routines/:id/run` starts a manual run, returns the Run.
 - `GET /api/runs?routineId=&limit=50` newest first; `GET /api/runs/:id` includes `log` text.
-- `POST /api/runs/:id/ack` acks the run. With body `{ key }` it marks one item done instead; the run is acked once no needs_you or code items remain open.
+- `POST /api/runs/:id/ack` with body `{ key }` marks that item done for the routine (dismissed.json); without a body it dismisses the run's own row (a failed run, or a needs_input run without items).
 - `GET /api/models` returns `{ agents: { claude, codex, custom }, t3: { claudeAgent, codex } }` model suggestions, from `~/.t3/userdata/model-manifest.json` `currentModels` when readable.
 - `GET /cron.mjs` serves `src/cron.mjs` so the dashboard parses schedules with the same code.
 - `POST /api/runs/:id/rerun` starts the run's routine again (409 when it is running).
 - `GET /api/runs/:id/items/:key/actions` lists applicable actions `[{ id, label, needsConfirm, primary, href? }]`; `POST .../actions/:action/preview` returns the confirm preview; `POST .../actions/:action` with optional `{ method?, repoPath? }` runs it and returns `{ ok, message, threadUrl?, reused? }`. Keys are URL-encoded. Inbox items and `GET /api/runs/:id` items carry the same `actions` list. See Item actions.
-- `GET /api/inbox` returns `{ count, entries: [{ runId, routineName, state, summary, finishedAt, items: Item[] (needs_you and code only, minus doneKeys), threads }] }` for unacked runs in `needs_input` or `failed`, plus unacked `done` runs that have needs_you or code items. Newest first.
+- `GET /api/inbox` returns `{ count, entries: [{ runId, routineId, routineName, state, summary, error?, finishedAt, items: Item[] (needs_you and code only, minus dismissed), threads }] }`, newest first. The inbox is current state per routine: items come from the routine's latest finished non-failed run only (older runs stay in Runs). A failed run shows only when it is the routine's latest finished run. `summary` is never null (the menu bar decodes it).
 - `GET /api/import[?source=]` returns `{ sources: [{ id, label, ok, error?, candidates: [Candidate & { imported }] }] }`. `POST /api/import` with `{ items: [{ source, sourceId }] }` re-lists those sources, creates routines from its own candidates, and returns the created routines. See Import.
 - `GET /api/cron/preview?expr=` returns `{ valid, description, next: string[5] }` or `{ valid: false, error }`.
 

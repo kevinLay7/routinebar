@@ -5,6 +5,7 @@ import * as store from "./store.mjs";
 import { createThread, T3Down } from "./t3.mjs";
 import { localClone } from "./importers.mjs";
 import { loginPath } from "./runner.mjs";
+import { canonicalKey, itemId } from "./inbox.mjs";
 
 export function parseKey(key) {
   let m = /^pr:([\w.-]+\/[\w.-]+)#(\d+)$/.exec(key);
@@ -35,7 +36,7 @@ const prAuthor = ({ repo, number }) => cached(`${repo}#${number}`, async () => (
 
 // mine is null when gh can't say who wrote the PR, which hides the author-specific actions.
 export async function contextFor(item, routine, deps = {}) {
-  const ref = parseKey(item.key);
+  const ref = parseKey(canonicalKey(item));
   let mine = null;
   if (ref.type === "pr") {
     try {
@@ -78,7 +79,7 @@ async function failedRunIds({ repo, number }) {
 
 export const isGitRepo = (p) => typeof p === "string" && isAbsolute(p) && existsSync(join(p, ".git"));
 const repoFor = (item, ref) => item.repoPath ?? (ref.type === "pr" ? localClone(ref.repo) : null);
-const seenId = (item, ctx) => `${ctx.routine.id}:${item.key}`;
+const seenId = (item, ctx) => itemId(ctx.routine.id, item);
 
 // T3 actions share the runner's seen.json key, so any thread already made for this item is reused.
 function t3Action(label, applies, prompt) {

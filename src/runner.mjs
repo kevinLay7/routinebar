@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as store from "./store.mjs";
 import { createThread, T3Down } from "./t3.mjs";
+import { canonicalKey } from "./inbox.mjs";
 
 export const AGENTS = {
   claude: (r) => ({ file: "claude", args: ["-p", r.prompt, "--model", r.model, "--dangerously-skip-permissions", "--output-format", "text"] }),
@@ -48,15 +49,17 @@ export function parseOutput(text) {
   if (!["done", "needs_input"].includes(out?.status)) throw new Error(`bad status ${JSON.stringify(out?.status)}`);
   if (typeof out.summary !== "string") throw new Error("summary must be a string");
   if (!Array.isArray(out.items)) throw new Error("items must be an array");
-  const items = out.items.map((it, i) => {
+  const items = new Map();
+  out.items.forEach((it, i) => {
     if (typeof it?.key !== "string" || !it.key || typeof it.title !== "string" || !KINDS.includes(it.kind)) {
       throw new Error(`item ${i} needs string key, string title, kind in ${KINDS.join("|")}`);
     }
     const item = { key: it.key, title: it.title, kind: it.kind };
     for (const f of ["url", "note", "repoPath", "threadPrompt"]) if (typeof it[f] === "string") item[f] = it[f];
-    return item;
+    item.key = canonicalKey(item);
+    if (!items.has(item.key)) items.set(item.key, item);
   });
-  return { status: out.status, summary: out.summary, items };
+  return { status: out.status, summary: out.summary, items: [...items.values()] };
 }
 
 function exec({ file, args, env }, cwd, logFile) {

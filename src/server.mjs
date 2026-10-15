@@ -8,6 +8,7 @@ import { AGENTS, startRun, isRunning, failInterrupted } from "./runner.mjs";
 import { seeds } from "./seeds.mjs";
 import { SOURCES, listSource } from "./importers.mjs";
 import { ACTIONS, contextFor, listActions, parseInput } from "./actions.mjs";
+import { inboxRuns, isDismissed, itemId, fingerprint, failedId, runRowId } from "./inbox.mjs";
 
 const PORT = Number(process.env.ROUTINEBAR_PORT || 4141);
 const INDEX = new URL("../public/index.html", import.meta.url);
@@ -120,9 +121,6 @@ function cronPreview(expr) {
   }
 }
 
-// Items the inbox shows for a run: needs_you and code, minus the ones marked done one by one.
-const openItems = (run) => run.items.filter((i) => i.kind !== "fyi" && !run.doneKeys?.includes(i.key));
-
 function models() {
   let current = {};
   try {
@@ -145,34 +143,48 @@ function routinesWithStatus() {
   });
 }
 
+// menubar/RoutineBar.swift decodes routineName, state and a non-null summary from each entry.
 async function inbox() {
   const routineNames = Object.fromEntries(store.routines().map((r) => [r.id, r.name]));
-  const entries = store
-    .runs()
-    .filter((r) => !r.ackedAt)
-    .map((r) => ({ run: r, items: openItems(r) }))
-    .filter(({ run, items }) => run.state === "needs_input" || run.state === "failed" || (run.state === "done" && items.length))
-    .map(async ({ run, items }) => ({
-      runId: run.id,
-      routineId: run.routineId,
-      routineName: routineNames[run.routineId] ?? run.routineId,
-      state: run.state,
-      summary: run.summary ?? run.error,
-      finishedAt: run.finishedAt,
-      items: await withActions(run, items),
-      threads: run.threads,
-    }));
+  const entries = inboxRuns(store.runs(), store.dismissed()).map(async ({ run, items }) => ({
+    runId: run.id,
+    routineId: run.routineId,
+    routineName: routineNames[run.routineId] ?? run.routineId,
+    state: run.state,
+    summary: run.summary ?? run.error ?? "",
+    error: run.error,
+    finishedAt: run.finishedAt,
+    items: await withActions(run, items),
+    threads: run.threads,
+  }));
   return { count: entries.length, entries: await Promise.all(entries) };
 }
 
 // Done items keep their history but offer no actions.
-const withActions = (run, items) =>
-  Promise.all(items.map(async (i) => ({ ...i, actions: run.doneKeys?.includes(i.key) ? [] : await listActions(i, await contextFor(i, store.routine(run.routineId))) })));
+function withActions(run, items) {
+  const dismissed = store.dismissed();
+  return Promise.all(
+    items.map(async (i) => {
+      const done = isDismissed(dismissed, run.routineId, i);
+      return { ...i, done, actions: done ? [] : await listActions(i, await contextFor(i, store.routine(run.routineId))) };
+    }),
+  );
+}
 
-// The run is acked once no needs_you or code items remain open; a failed run waits for an explicit ack.
-function markDone(run, key) {
-  run.doneKeys = [...new Set([...(run.doneKeys ?? []), key])];
-  if (run.state !== "failed" && !openItems(run).length) run.ackedAt ??= new Date().toISOString();
+const dismissItem = (run, item) => store.dismiss(itemId(run.routineId, item), fingerprint(item));
+
+// One-time move from run-level ackedAt/doneKeys to dismissed.json, oldest run first so the newest wins.
+function migrateAcks() {
+  const map = store.dismissed();
+  for (const run of store.runs().reverse()) {
+    if (!run.ackedAt && !run.doneKeys) continue;
+    for (const i of run.items) if (run.ackedAt || run.doneKeys.includes(i.key)) map[itemId(run.routineId, i)] = fingerprint(i);
+    if (run.ackedAt) map[run.state === "failed" ? failedId(run.routineId) : runRowId(run.routineId)] = run.id;
+    delete run.ackedAt;
+    delete run.doneKeys;
+    store.saveRun(run);
+  }
+  store.saveDismissed(map);
 }
 
 function mustRun(id) {
@@ -222,8 +234,8 @@ async function runAction([runId, key, actionId], body) {
   const it = run.items.find((i) => i.key === key);
   it.history = [...(it.history ?? []), { action: actionId, at: new Date().toISOString(), ok: res.ok, message: res.message, ...(res.threadUrl && { threadUrl: res.threadUrl }) }];
   if (res.threadId && !run.threads.some((t) => t.key === key)) run.threads.push({ key, threadId: res.threadId, url: res.threadUrl, reused: res.reused });
-  if (res.ok && action.done) markDone(run, key);
   store.saveRun(run);
+  if (res.ok && action.done) dismissItem(run, it);
   return res;
 }
 
@@ -272,11 +284,14 @@ const routes = [
     ([id], body) => {
       const run = mustRun(id);
       const key = body?.key;
-      if (key === undefined) run.ackedAt ??= new Date().toISOString();
-      else if (!run.items.some((i) => i.key === key)) throw new HttpError(400, "no such item in this run");
-      else markDone(run, key);
-      store.saveRun(run);
-      return run;
+      if (key === undefined) {
+        store.dismiss((run.state === "failed" ? failedId : runRowId)(run.routineId), run.id);
+        return { ok: true };
+      }
+      const item = run.items.find((i) => i.key === key);
+      if (!item) throw new HttpError(400, "no such item in this run");
+      dismissItem(run, item);
+      return { ok: true };
     },
   ],
   [
@@ -352,5 +367,6 @@ function tick() {
 
 if (!store.hasRoutines()) store.saveRoutines(seeds);
 failInterrupted();
+migrateAcks();
 server.listen(PORT, "127.0.0.1", () => console.log(`routinebar on http://127.0.0.1:${PORT} (home ${store.HOME})`));
 scheduleTick();

@@ -16,6 +16,7 @@ function write(file, value) {
 
 const ROUTINES = join(HOME, "routines.json");
 const SEEN = join(HOME, "seen.json");
+const DISMISSED = join(HOME, "dismissed.json");
 
 export const hasRoutines = () => existsSync(ROUTINES);
 export const routines = () => read(ROUTINES, []);
@@ -31,6 +32,10 @@ export const seen = () => read(SEEN, {});
 export function markSeen(id, record) {
   write(SEEN, { ...seen(), [id]: record });
 }
+
+export const dismissed = () => read(DISMISSED, {});
+export const saveDismissed = (map) => write(DISMISSED, map);
+export const dismiss = (id, value) => saveDismissed({ ...dismissed(), [id]: value });
 
 export const saveRun = (run) => write(join(RUNS, run.id + ".json"), run);
 export const run = (id) => read(join(RUNS, id + ".json"), null);
