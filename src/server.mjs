@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as store from "./store.mjs";
 import { parseCron, matches, nextRuns, describe } from "./cron.mjs";
-import { AGENTS, startRun, isRunning, adoptRuns } from "./runner.mjs";
+import { AGENTS, startRun, runningRun, adoptRuns } from "./runner.mjs";
 import { seeds } from "./seeds.mjs";
 import { SOURCES, listSource } from "./importers.mjs";
 import { ACTIONS, contextFor, listActions, parseInput } from "./actions.mjs";
@@ -20,10 +20,18 @@ const PROVIDERS = ["claudeAgent", "codex"];
 const RUNTIME_MODES = ["approval-required", "auto-accept-edits", "full-access"];
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, extra) {
     super(message);
     this.status = status;
+    this.extra = extra;
   }
+}
+
+// A manual start never touches a running run; the 409 points the dashboard at it instead.
+function startManual(routine) {
+  const running = runningRun(routine.id);
+  if (running) throw new HttpError(409, "already running", { runId: running.id });
+  return startRun(routine, "manual");
 }
 
 function validateRoutine(id, b) {
@@ -253,11 +261,7 @@ const routes = [
   [
     "POST",
     /^\/api\/routines\/([^/]+)\/run$/,
-    ([id]) => {
-      const r = mustRoutine(id);
-      if (isRunning(id)) throw new HttpError(409, "already running");
-      return startRun(r, "manual");
-    },
+    ([id]) => startManual(mustRoutine(id)),
   ],
   [
     "GET",
@@ -299,11 +303,7 @@ const routes = [
   [
     "POST",
     /^\/api\/runs\/([^/]+)\/rerun$/,
-    ([id]) => {
-      const r = mustRoutine(mustRun(id).routineId);
-      if (isRunning(r.id)) throw new HttpError(409, "already running");
-      return startRun(r, "manual");
-    },
+    ([id]) => startManual(mustRoutine(mustRun(id).routineId)),
   ],
   [
     "GET",
@@ -349,7 +349,7 @@ const server = createServer(async (req, res) => {
     }
     send(404, { error: "not found" });
   } catch (e) {
-    send(e.status ?? 500, { error: e.message });
+    send(e.status ?? 500, { error: e.message, ...e.extra });
   }
 });
 
@@ -363,7 +363,7 @@ function tick() {
   lastTick = minute;
   const now = new Date(minute);
   for (const r of store.routines()) {
-    if (r.enabled && matches(parseCron(r.schedule), now) && !isRunning(r.id)) startRun(r, "schedule");
+    if (r.enabled && matches(parseCron(r.schedule), now) && !runningRun(r.id)) startRun(r, "schedule");
   }
 }
 

@@ -122,6 +122,8 @@
   .row-main { flex: 1; min-width: 0; }
   .row-title { font-size: var(--t-md); font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
   .row-note { margin-top: 2px; color: var(--text); opacity: 0.85; max-width: 72ch; text-wrap: pretty; }
+  .row-note.tail { white-space: pre-line; }
+  .row-note.muted { color: var(--muted); }
   .row-meta { margin-top: 4px; color: var(--muted); font-size: var(--t-xs); letter-spacing: 0.01em; display: flex; flex-wrap: wrap; gap: 0 6px; }
   .row-meta > * + *::before { content: "·"; margin-right: 6px; color: var(--subtle); }
   .row-meta a { color: var(--muted); }
@@ -270,10 +272,21 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { "content-type": "application/json" } });
   const body = await res.json();
-  if (!res.ok) throw new Error(body.error);
+  if (!res.ok) throw Object.assign(new Error(body.error), { runId: body.runId });
   return body;
 }
 const post = (path, body) => api(path, { method: "POST", body: body && JSON.stringify(body) });
+
+// Starting a routine that is already running is not an error: the server leaves that run alone, so show it.
+async function startRoutine(path) {
+  try {
+    location.hash = `#runs/${(await post(path)).id}`;
+  } catch (e) {
+    if (!e.runId) return toast(e.message);
+    location.hash = `#runs/${e.runId}`;
+    toast("Already running");
+  }
+}
 
 let toastTimer;
 function toast(msg, link) {
@@ -455,10 +468,12 @@ function inboxRow({ e, item, thread, key }) {
 }
 
 function failedRow({ e, key }) {
+  const tail = e.summary !== e.error && e.summary;
   return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="" data-open="#runs/${esc(e.runId)}">
     <div class="row-main">
       <div class="row-title">${esc(e.routineName)}</div>
-      <div class="row-note mono">${esc(e.summary || "Failed")}</div>
+      ${tail ? `<div class="row-note tail">${esc(tail)}</div>` : ""}
+      <div class="row-note mono muted">${esc(e.error || "Failed")}</div>
       <div class="row-meta"><span class="state failed">Failed</span><span>${timeEl(e.finishedAt)}</span></div>
     </div>
     <div class="row-actions"><a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a><button class="btn" data-done>Done</button></div>
@@ -697,7 +712,7 @@ views.routines = async (el, id) => {
         <td>${r.importedFrom?.needsSchedule ? NEEDS_SCHEDULE : esc(scheduleText(r.schedule))}</td>
         <td class="hide-narrow nowrap">${r.lastRun ? `<a href="#runs/${esc(r.lastRun.id)}" class="state quiet ${r.lastRun.state}" title="${esc(STATE[r.lastRun.state])}">${timeEl(r.lastRun.finishedAt ?? r.lastRun.startedAt)}</a>` : `<span class="subtle">Never</span>`}</td>
         <td class="nowrap">${r.nextRun ? timeEl(r.nextRun) : `<span class="subtle">Off</span>`}</td>
-        <td class="right"><button class="btn" data-run>Run now</button></td>
+        <td class="right">${r.lastRun?.state === "running" ? `<a class="btn" href="#runs/${esc(r.lastRun.id)}">Already running</a>` : `<button class="btn" data-run>Run now</button>`}</td>
       </tr>`).join("")}</tbody>
     </table></div>`;
   $("#importBtn", el).onclick = openImport;
@@ -708,9 +723,8 @@ views.routines = async (el, id) => {
       try { await api(`/api/routines/${r.id}`, { method: "PUT", body: JSON.stringify({ ...r, enabled: !r.enabled }) }); } catch (e) { toast(e.message); }
       render();
     };
-    $("[data-run]", tr).onclick = async () => {
-      try { location.hash = `#runs/${(await post(`/api/routines/${r.id}/run`)).id}`; } catch (e) { toast(e.message === "already running" ? `${r.name} is already running` : e.message); }
-    };
+    const runNow = $("[data-run]", tr);
+    if (runNow) runNow.onclick = () => startRoutine(`/api/routines/${r.id}/run`);
   }
 };
 
@@ -821,33 +835,31 @@ const historyHtml = (h = []) => h.length ? `<ul class="notes history">${h.map((x
 async function runDetail(el, id) {
   const [run, routines] = await Promise.all([api(`/api/runs/${encodeURIComponent(id)}`), api("/api/routines")]);
   const r = routines.find((x) => x.id === run.routineId);
-  const done = new Set(run.doneKeys ?? []);
   el.innerHTML = `
     <a class="back" href="#runs">← Runs</a>
-    <div class="page-head"><div class="grow"><h1 class="headline">${r ? `<a href="#routines/${esc(r.id)}" style="color:inherit">${esc(r.name)}</a>` : esc(run.routineId)}</h1></div>${state(run.state, true)}${r ? `<button type="button" class="btn" id="again">Run again</button>` : ""}</div>
+    <div class="page-head"><div class="grow"><h1 class="headline">${r ? `<a href="#routines/${esc(r.id)}" style="color:inherit">${esc(r.name)}</a>` : esc(run.routineId)}</h1></div>${state(run.state, true)}${r && run.state !== "running" ? `<button type="button" class="btn" id="again">Run again</button>` : ""}</div>
     <div class="facts">
       <div><span class="caps">Started</span><span>${esc(absTime(run.startedAt))} <span class="muted">(${timeEl(run.startedAt)})</span></span></div>
       <div><span class="caps">Duration</span><span>${run.finishedAt ? duration(run.startedAt, run.finishedAt) : `<span class="muted">still running</span>`}</span></div>
       <div><span class="caps">Trigger</span><span>${TRIGGER[run.trigger] ?? esc(run.trigger)}</span></div>
-      ${run.ackedAt ? `<div><span class="caps">Cleared</span><span>${timeEl(run.ackedAt)}</span></div>` : ""}
+      ${run.repaired ? `<div><span class="caps">Output</span><span>Fixed by a repair turn</span></div>` : ""}
     </div>
     ${run.summary ? `<p class="summary">${esc(run.summary)}</p>` : ""}
     ${run.error ? `<div class="error-box">${esc(run.error)}</div>` : ""}
-    ${run.items.length ? `<section class="group"><h2 class="group-head caps">Items</h2><ul class="list">${run.items.map((i) => `<li class="row${done.has(i.key) ? " is-done" : ""}" data-key="${esc(`${run.id}|${i.key}`)}" data-run="${esc(run.id)}" data-item="${esc(i.key)}">
+    ${run.items.length ? `<section class="group"><h2 class="group-head caps">Items</h2><ul class="list">${run.items.map((i) => `<li class="row${i.done ? " is-done" : ""}" data-key="${esc(`${run.id}|${i.key}`)}" data-run="${esc(run.id)}" data-item="${esc(i.key)}">
       <span class="kind caps">${KIND[i.kind] ?? esc(i.kind)}</span>
       <div class="row-main"><div class="row-title">${i.url ? `<a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.title)}</a>` : esc(i.title)}</div>
         ${i.note ? `<div class="row-note">${esc(i.note)}</div>` : ""}
-        <div class="row-meta"><span class="mono">${esc(i.key)}</span>${i.repoPath ? `<span class="mono">${esc(i.repoPath)}</span>` : ""}${done.has(i.key) ? "<span>Done</span>" : ""}</div>
+        <div class="row-meta"><span class="mono">${esc(i.key)}</span>${i.repoPath ? `<span class="mono">${esc(i.repoPath)}</span>` : ""}${i.done ? "<span>Done</span>" : ""}</div>
         ${rowError(`${run.id}|${i.key}`)}${historyHtml(i.history)}</div>
       ${i.actions.length ? `<div class="row-actions">${itemActions(run.id, i, "", run.threads.find((t) => t.key === i.key)?.url)}</div>` : ""}
     </li>`).join("")}</ul></section>` : ""}
     ${run.threads.length ? `<section class="group"><h2 class="group-head caps">T3 threads</h2><ul class="list">${run.threads.map((t) => `<li class="row">
       <div class="row-main"><div class="row-title mono" style="font-size:var(--t-sm)">${esc(t.key)}</div><div class="row-meta"><span>${t.reused ? "Existing thread, linked again" : "New thread"}</span></div></div>
       <div class="row-actions"><a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">Open thread</a></div></li>`).join("")}</ul></section>` : ""}
-    <details class="disclosure"><summary>Raw log</summary><pre class="log">${esc(run.log) || "(empty)"}</pre></details>`;
-  if (r) $("#again", el).onclick = async () => {
-    try { location.hash = `#runs/${(await post(`/api/runs/${encodeURIComponent(run.id)}/rerun`)).id}`; } catch (e) { toast(e.message === "already running" ? `${r.name} is already running` : e.message); }
-  };
+    <details class="disclosure"><summary>Raw log</summary><pre class="log">${esc(run.log) || "(empty)"}</pre></details>
+    ${run.err ? `<details class="disclosure"><summary>Errors and warnings</summary><pre class="log">${esc(run.err)}</pre></details>` : ""}`;
+  if ($("#again", el)) $("#again", el).onclick = () => startRoutine(`/api/runs/${encodeURIComponent(run.id)}/rerun`);
   if (run.state === "running") setTimeout(() => location.hash === `#runs/${id}` && render(), 3000);
 }
 

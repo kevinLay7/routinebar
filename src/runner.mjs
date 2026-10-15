@@ -199,7 +199,7 @@ async function execute(run) {
   finish(run, out.status === "needs_input" || blocked ? "needs_input" : "done", { summary: out.summary, items: out.items, threads });
 }
 
-export const isRunning = (routineId) => store.runs().some((r) => r.routineId === routineId && r.state === "running");
+export const runningRun = (routineId) => store.runs().find((r) => r.routineId === routineId && r.state === "running");
 
 const watch = (run) => execute(run).catch((e) => run.state === "running" && finish(run, "failed", { error: e.message }));
 
