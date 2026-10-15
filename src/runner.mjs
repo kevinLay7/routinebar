@@ -1,15 +1,29 @@
 import { spawn, execFile, execFileSync } from "node:child_process";
-import { createWriteStream, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { openSync, closeSync, existsSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import * as store from "./store.mjs";
 import { createThread, T3Down } from "./t3.mjs";
 import { canonicalKey } from "./inbox.mjs";
 
+const lastJsonLine = (text) => JSON.parse(text.trim().split("\n").findLast((l) => l.startsWith("{")) ?? "null");
+
+// cmd builds the agent process; result reads its final message (and session id) back from the phase's files.
 export const AGENTS = {
-  claude: (r) => ({ file: "claude", args: ["-p", r.prompt, "--model", r.model, "--dangerously-skip-permissions", "--output-format", "text"] }),
-  codex: (r, tmp) => ({ file: "codex", args: ["exec", "-m", r.model, "--dangerously-bypass-approvals-and-sandbox", "-C", r.cwd, "-o", tmp, r.prompt], outputFile: tmp }),
-  custom: (r) => ({ file: "sh", args: ["-c", r.command], env: { PROMPT: r.prompt, MODEL: r.model } }),
+  claude: {
+    cmd: (r) => ({ file: "claude", args: ["-p", r.prompt, "--model", r.model, "--dangerously-skip-permissions", "--output-format", "json"] }),
+    result: (f) => {
+      const out = lastJsonLine(store.text(f.log));
+      return { text: out?.result ?? "", sessionId: out?.session_id };
+    },
+  },
+  codex: {
+    cmd: (r, f) => ({ file: "codex", args: ["exec", "-m", r.model, "--dangerously-bypass-approvals-and-sandbox", "-C", r.cwd, "-o", f.out, r.prompt] }),
+    result: (f) => ({ text: store.text(f.out), sessionId: /session id: ([\w-]+)/.exec(store.text(f.err))?.[1] }),
+  },
+  custom: {
+    cmd: (r) => ({ file: "sh", args: ["-c", r.command], env: { PROMPT: r.prompt, MODEL: r.model } }),
+    result: (f) => ({ text: store.text(f.log) }),
+  },
 };
 
 const CONTRACT = `
@@ -23,6 +37,7 @@ Use "needs_input" when anything needs the user.`;
 const TRANSITIONS = { running: ["done", "needs_input", "failed"] };
 const KINDS = ["needs_you", "code", "fyi"];
 const TIMEOUT = 30 * 60e3;
+const POLL = 2e3;
 
 let pathCache;
 export const loginPath = () => (pathCache ??= execFileSync("zsh", ["-lc", "echo $PATH"], { encoding: "utf8" }).trim());
@@ -62,20 +77,55 @@ export function parseOutput(text) {
   return { status: out.status, summary: out.summary, items: [...items.values()] };
 }
 
-function exec({ file, args, env }, cwd, logFile) {
-  return new Promise((resolve) => {
-    const log = createWriteStream(logFile);
-    let stdout = "";
-    let error;
-    const child = spawn(file, args, { cwd, env: { ...process.env, PATH: loginPath(), ...env }, timeout: TIMEOUT, stdio: ["ignore", "pipe", "pipe"] });
-    child.stdout.on("data", (c) => ((stdout += c), log.write(c)));
-    child.stderr.on("data", (c) => log.write(c));
-    child.on("error", (e) => (error = e.message));
-    child.on("close", (code, signal) => {
-      log.end();
-      resolve({ stdout, error: error ?? (signal ? `killed by ${signal}` : code !== 0 ? `exit ${code}` : null) });
+// The agent runs in its own process group with output going straight to files, so it outlives a server
+// restart; the wrapping sh records the exit code for whichever server process is watching by then.
+function spawnDetached({ file, args, env }, f, cwd) {
+  const out = openSync(f.log, "w");
+  const err = openSync(f.err, "w");
+  try {
+    const child = spawn("sh", ["-c", 'exit_file=$1; shift; "$@"; echo $? > "$exit_file"', "sh", f.exit, file, ...args], {
+      cwd,
+      env: { ...process.env, PATH: loginPath(), ...env },
+      detached: true,
+      stdio: ["ignore", out, err],
     });
-  });
+    child.on("error", () => {});
+    child.unref();
+    return child.pid;
+  } finally {
+    closeSync(out);
+    closeSync(err);
+  }
+}
+
+function alive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+
+// ponytail: trusts that a live pid is still our agent; a pid reused while the server was down waits out the timeout.
+async function waitDead(run) {
+  while (alive(run.pid)) {
+    if (Date.now() - Date.parse(run.startedAt) > TIMEOUT) {
+      try {
+        process.kill(-run.pid, "SIGKILL");
+      } catch {}
+      throw new Error(`timed out after ${TIMEOUT / 60e3} min`);
+    }
+    await sleep(POLL);
+  }
+}
+
+function readResult(agent, f) {
+  if (!existsSync(f.exit)) return { error: "interrupted" };
+  const code = Number(store.text(f.exit).trim());
+  if (code !== 0) return { error: [`exit ${code}`, store.text(f.err).trim().split("\n").at(-1)].filter(Boolean).join(": ") };
+  return AGENTS[agent].result(f);
 }
 
 async function linkThreads(routine, items) {
@@ -100,33 +150,37 @@ async function linkThreads(routine, items) {
   return { threads, blocked };
 }
 
-async function execute(routine, run) {
-  const tmp = join(tmpdir(), `routinebar-${run.id}.txt`);
-  const spec = AGENTS[routine.agent]({ ...routine, prompt: routine.prompt + CONTRACT }, tmp);
-  const res = await exec(spec, routine.cwd, store.logPath(run.id));
+// The same path finishes a run this process started and one adopted from a previous server process.
+async function execute(run) {
+  await waitDead(run);
+  const res = readResult(run.agent, store.files(run.id));
   if (res.error) return finish(run, "failed", { error: res.error });
   let out;
   try {
-    out = parseOutput(spec.outputFile ? readFileSync(spec.outputFile, "utf8") : res.stdout);
+    out = parseOutput(res.text);
   } catch (e) {
     return finish(run, "failed", { error: `bad agent output: ${e.message}` });
-  } finally {
-    rmSync(tmp, { force: true });
   }
+  const routine = store.routine(run.routineId);
+  if (!routine) return finish(run, "failed", { error: "routine was deleted" });
   const { threads, blocked } = await linkThreads(routine, out.items);
   finish(run, out.status === "needs_input" || blocked ? "needs_input" : "done", { summary: out.summary, items: out.items, threads });
 }
 
 export const isRunning = (routineId) => store.runs().some((r) => r.routineId === routineId && r.state === "running");
 
+const watch = (run) => execute(run).catch((e) => run.state === "running" && finish(run, "failed", { error: e.message }));
+
 export function startRun(routine, trigger) {
   const startedAt = new Date().toISOString();
-  const run = { id: `${startedAt.replace(/[-:.]/g, "")}-${routine.id}`, routineId: routine.id, trigger, state: "running", startedAt, items: [], threads: [] };
+  const run = { id: `${startedAt.replace(/[-:.]/g, "")}-${routine.id}`, routineId: routine.id, trigger, agent: routine.agent, state: "running", startedAt, items: [], threads: [] };
+  const f = store.files(run.id);
+  run.pid = spawnDetached(AGENTS[routine.agent].cmd({ ...routine, prompt: routine.prompt + CONTRACT }, f), f, routine.cwd);
   store.saveRun(run);
-  execute(routine, run).catch((e) => run.state === "running" && finish(run, "failed", { error: e.message }));
+  if (run.pid) watch(run);
+  else finish(run, "failed", { error: `could not start the agent in ${routine.cwd}` });
   return run;
 }
 
-export function failInterrupted() {
-  for (const r of store.runs()) if (r.state === "running") finish(r, "failed", { error: "interrupted" });
-}
+// A run left running by an earlier server process: keep waiting if its agent lives, else finish from its files.
+export const adoptRuns = () => store.runs().filter((r) => r.state === "running").forEach(watch);

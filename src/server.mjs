@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as store from "./store.mjs";
 import { parseCron, matches, nextRuns, describe } from "./cron.mjs";
-import { AGENTS, startRun, isRunning, failInterrupted } from "./runner.mjs";
+import { AGENTS, startRun, isRunning, adoptRuns } from "./runner.mjs";
 import { seeds } from "./seeds.mjs";
 import { SOURCES, listSource } from "./importers.mjs";
 import { ACTIONS, contextFor, listActions, parseInput } from "./actions.mjs";
@@ -275,7 +275,8 @@ const routes = [
     /^\/api\/runs\/([^/]+)$/,
     async ([id]) => {
       const run = mustRun(id);
-      return { ...run, items: await withActions(run, run.items), log: store.log(id) };
+      const f = store.files(id);
+      return { ...run, items: await withActions(run, run.items), log: store.text(f.log), err: store.text(f.err) };
     },
   ],
   [
@@ -366,7 +367,7 @@ function tick() {
 }
 
 if (!store.hasRoutines()) store.saveRoutines(seeds);
-failInterrupted();
+adoptRuns();
 migrateAcks();
 server.listen(PORT, "127.0.0.1", () => console.log(`routinebar on http://127.0.0.1:${PORT} (home ${store.HOME})`));
 scheduleTick();

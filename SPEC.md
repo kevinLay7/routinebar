@@ -5,8 +5,8 @@ Local scheduler for agent routines on macOS. Node 24, zero npm dependencies. One
 ## Data (all under `~/.routinebar/`, override with `ROUTINEBAR_HOME`)
 
 - `routines.json`: array of Routine.
-- `runs/<runId>.json`: one file per Run. Only the process running that run writes it.
-- `logs/<runId>.log`: raw agent stdout+stderr.
+- `runs/<runId>.json`: one file per Run. Only the server process writes it.
+- `logs/<runId>.log` and `logs/<runId>.err`: the agent's stdout and stderr. `runs/<runId>.exit` holds its exit code; `runs/<runId>.out` is codex's final message.
 - `seen.json`: `{ [routineId + ":" + canonicalKey(item)]: { threadId, url, createdAt } }`. Dedupes T3 threads across runs.
 - `dismissed.json`: `{ [routineId + ":" + canonicalKey(item)]: fingerprint }` for items marked done, where fingerprint hashes the item's kind and note, so an item comes back only when the agent reports something new about it. Run-level rows use `routineId:failed` and `routineId:run` with the run id as the value.
 
@@ -41,6 +41,7 @@ type Item = {
 };
 type Run = {
   id: string; routineId: string; trigger: "schedule" | "manual";
+  agent: Agent; pid: number; // the detached agent's process (group leader)
   state: RunState; startedAt: string; finishedAt?: string;
   summary?: string; items: Item[];
   threads: { key: string; threadId: string; url: string; reused: boolean }[];
@@ -48,17 +49,17 @@ type Run = {
 };
 ```
 
-Run lifecycle is a state machine: `running -> done | needs_input | failed`. Older run files with `ackedAt` or `doneKeys` are moved into `dismissed.json` on startup. On startup, any run left `running` by a dead process becomes `failed` with error "interrupted".
+Run lifecycle is a state machine: `running -> done | needs_input | failed`. Older run files with `ackedAt` or `doneKeys` are moved into `dismissed.json` on startup. Agents run detached (own process group, output straight to files), so they survive a server restart. Each running run is watched by polling its pid every 2 s; on startup the server adopts every `running` run the same way. When the pid is gone, the `.exit` file and logs finish the run; no `.exit` file means `failed` with "interrupted". The 30 min timeout kills the process group.
 
 ## Agent contract
 
 The runner appends this to every prompt: the agent must end its reply with a fenced ```json block containing `{ "status": "done" | "needs_input", "summary": string, "items": Item[] }`. The runner parses the **last** ```json block in the output. Parse failure or non-zero exit makes the run `failed`, with the log kept.
 
 Agent registry (a table, not branches):
-- claude: `claude -p <prompt> --model <model> --dangerously-skip-permissions --output-format text`
-- codex: `codex exec -m <model> --dangerously-bypass-approvals-and-sandbox -C <cwd> -o <tmpfile> <prompt>`. Read the final message from the tmpfile.
-- custom: `sh -c <command>` with `PROMPT` and `MODEL` env vars.
-All run with `cwd`, inherit the user's login env (PATH from `zsh -lc 'echo $PATH'` captured once), and have a 30 min timeout.
+- claude: `claude -p <prompt> --model <model> --dangerously-skip-permissions --output-format json`. The final message is `.result` of the last JSON line of stdout.
+- codex: `codex exec -m <model> --dangerously-bypass-approvals-and-sandbox -C <cwd> -o runs/<runId>.out <prompt>`. Read the final message from that file.
+- custom: `sh -c <command>` with `PROMPT` and `MODEL` env vars; the final message is stdout.
+All run with `cwd`, inherit the user's login env (PATH from `zsh -lc 'echo $PATH'` captured once), and have a 30 min timeout (from the run's start).
 
 ## T3 threads
 
@@ -72,7 +73,7 @@ If T3 is not running (no runtime file or connection refused), the run becomes `n
 ## Process
 
 `node src/server.mjs` is one long-lived process (launchd KeepAlive). It:
-- ticks every minute on the minute; for each enabled routine whose cron matches the current minute and which has no run in state `running`, starts a run.
+- ticks every minute on the minute; for each enabled routine whose cron matches the current minute and which has no run in state `running`, starts a run. A routine with a running run is skipped silently; the running run is never touched.
 - serves the UI and API on `127.0.0.1:4141` (override with `ROUTINEBAR_PORT`).
 - posts a macOS notification (`osascript -e 'display notification ...'`) when a run ends `needs_input` or `failed`, or creates a thread.
 Missed ticks while the Mac sleeps are skipped, not caught up.
@@ -81,7 +82,7 @@ Missed ticks while the Mac sleeps are skipped, not caught up.
 
 - `GET /api/routines` (each with `lastRun: {id, state, startedAt, finishedAt} | null` and `nextRun: ISO | null`), `PUT /api/routines/:id` (upsert, validate at this boundary), `DELETE /api/routines/:id`
 - `POST /api/routines/:id/run` starts a manual run, returns the Run.
-- `GET /api/runs?routineId=&limit=50` newest first; `GET /api/runs/:id` includes `log` text.
+- `GET /api/runs?routineId=&limit=50` newest first; `GET /api/runs/:id` includes `log` (stdout) and `err` (stderr) text.
 - `POST /api/runs/:id/ack` with body `{ key }` marks that item done for the routine (dismissed.json); without a body it dismisses the run's own row (a failed run, or a needs_input run without items).
 - `GET /api/models` returns `{ agents: { claude, codex, custom }, t3: { claudeAgent, codex } }` model suggestions, from `~/.t3/userdata/model-manifest.json` `currentModels` when readable.
 - `GET /cron.mjs` serves `src/cron.mjs` so the dashboard parses schedules with the same code.

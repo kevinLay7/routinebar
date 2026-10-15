@@ -45,5 +45,9 @@ export const runs = () =>
     .filter((f) => f.endsWith(".json"))
     .map((f) => read(join(RUNS, f)))
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-export const logPath = (id) => join(LOGS, id + ".log");
-export const log = (id) => (existsSync(logPath(id)) ? readFileSync(logPath(id), "utf8") : "");
+// One agent process per phase: stdout to .log, stderr to .err, its exit code to .exit, codex's last message to .out.
+export function files(id, phase = "main") {
+  const base = phase === "main" ? id : `${id}.${phase}`;
+  return { log: join(LOGS, base + ".log"), err: join(LOGS, base + ".err"), exit: join(RUNS, base + ".exit"), out: join(RUNS, base + ".out") };
+}
+export const text = (file) => (existsSync(file) ? readFileSync(file, "utf8") : "");
