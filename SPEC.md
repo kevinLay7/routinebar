@@ -15,7 +15,7 @@ type Routine = {
   id: string;            // slug
   name: string;
   enabled: boolean;
-  schedule: string;      // 5-field cron, local time
+  schedule: string;      // one or more 5-field crons joined by "; ", local time
   agent: Agent;
   model: string;
   command?: string;      // custom only; sh template, gets $PROMPT and $MODEL env vars
@@ -90,7 +90,7 @@ Single `public/index.html` (vanilla JS + CSS, no build). Three tabs:
 
 ## Cron
 
-`src/cron.mjs`: parse 5 fields (minute hour dom month dow), with `*`, lists, ranges, steps, dow 0-7 (both 0 and 7 are Sunday). Standard dom/dow OR semantics when both are restricted. Exports `parseCron`, `matches(cron, date)`, `nextRuns(cron, from, n)`, `describe(cron)`. `src/cron.test.mjs` runs with `node --test` and asserts literal expected values.
+`src/cron.mjs`: parse 5 fields (minute hour dom month dow), with `*`, lists, ranges, steps, dow 0-7 (both 0 and 7 are Sunday). Standard dom/dow OR semantics when both are restricted. A schedule may hold several expressions separated by `;` (times with different minutes need this): it matches when any does, `nextRuns` merges and dedupes, `describe` joins with "; ". Exports `parseCron`, `matches(cron, date)`, `nextRuns(cron, from, n)`, `describe(cron)`. `src/cron.test.mjs` runs with `node --test` and asserts literal expected values.
 
 ## Seeds
 

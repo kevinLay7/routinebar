@@ -22,8 +22,8 @@ function parseField(text, { name, min, max }) {
   return values;
 }
 
-export function parseCron(expr) {
-  const parts = String(expr).trim().split(/\s+/);
+function parseOne(expr) {
+  const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) throw new Error("expected 5 fields: minute hour day-of-month month day-of-week");
   const [minute, hour, dom, month, dow] = parts.map((p, i) => parseField(p, FIELDS[i]));
   return { minute, hour, dom, month, dow, domStar: parts[2].startsWith("*"), dowStar: parts[4].startsWith("*") };
@@ -36,11 +36,25 @@ function dayMatches(c, d) {
   return dom || dow;
 }
 
-export function matches(c, d) {
-  return c.minute.has(d.getMinutes()) && c.hour.has(d.getHours()) && c.month.has(d.getMonth() + 1) && dayMatches(c, d);
+// A schedule is one or more 5-field expressions joined by ";" because times with
+// different minutes (9:00 and 13:30) cannot share a single cron line.
+export function parseCron(expr) {
+  const list = String(expr).split(";").filter((e) => e.trim());
+  if (!list.length) throw new Error("expected 5 fields: minute hour day-of-month month day-of-week");
+  return list.map(parseOne);
 }
 
-export function nextRuns(c, from, n) {
+const matchesOne = (c, d) =>
+  c.minute.has(d.getMinutes()) && c.hour.has(d.getHours()) && c.month.has(d.getMonth() + 1) && dayMatches(c, d);
+
+export const matches = (cs, d) => cs.some((c) => matchesOne(c, d));
+
+export function nextRuns(cs, from, n) {
+  const all = cs.flatMap((c) => nextRunsOne(c, from, n)).sort((a, b) => a - b);
+  return all.filter((d, i) => i === 0 || +d !== +all[i - 1]).slice(0, n);
+}
+
+function nextRunsOne(c, from, n) {
   const out = [];
   const d = new Date(from);
   d.setSeconds(0, 0);
@@ -91,6 +105,4 @@ function describeDays(c) {
   return text;
 }
 
-export function describe(c) {
-  return describeTime(c) + describeDays(c);
-}
+export const describe = (cs) => cs.map((c) => describeTime(c) + describeDays(c)).join("; ");

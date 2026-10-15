@@ -58,3 +58,23 @@ test("invalid expressions are rejected", () => {
     assert.throws(() => parseCron(bad), Error, bad);
   }
 });
+
+test("several expressions: matches any, next runs merge in order and dedupe", () => {
+  const c = parseCron("0 9 * * 1-5; 30 13 * * 1-5; 0 9 * * 1");
+  assert.equal(c.length, 3);
+  assert.equal(matches(c, new Date(2026, 9, 16, 13, 30)), true);
+  assert.equal(matches(c, new Date(2026, 9, 16, 13, 0)), false);
+  assert.deepEqual(next("0 9 * * 1-5; 30 13 * * 1-5; 0 9 * * 1", new Date(2026, 9, 16, 10, 0), 4), [
+    "2026-10-16 13:30",
+    "2026-10-19 09:00",
+    "2026-10-19 13:30",
+    "2026-10-20 09:00",
+  ]);
+  assert.equal(describe(c), "At 09:00 on weekdays; At 13:30 on weekdays; At 09:00 on Mon");
+});
+
+test("empty segments are ignored and a bad segment rejects the whole schedule", () => {
+  assert.equal(describe(parseCron("0 9 * * *;")), "At 09:00");
+  assert.throws(() => parseCron("0 9 * * *; 61 * * * *"), /minute out of range/);
+  assert.throws(() => parseCron(" ; "), Error);
+});
