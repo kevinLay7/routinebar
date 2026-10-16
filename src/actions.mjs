@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import * as store from "./store.mjs";
-import { createThread, T3Down } from "./t3.mjs";
+import { T3Down } from "./t3.mjs";
+import { launchTask, editorName } from "./editor.mjs";
 import { localClone } from "./importers.mjs";
 import { loginPath } from "./runner.mjs";
 import { canonicalKey, itemId } from "./inbox.mjs";
@@ -100,19 +101,19 @@ function t3Action(label, applies, prompt) {
       if (!cwd) throw new Error("Choose a local repo for this thread");
       let t;
       try {
-        t = await (ctx.createThread ?? createThread)({ cwd, title: item.title, prompt: prompt(item, ctx.ref), t3: ctx.routine.t3 });
+        t = await (ctx.createThread ?? launchTask)({ cwd, title: item.title, prompt: prompt(item, ctx.ref), t3: ctx.routine.t3 });
       } catch (e) {
         throw e instanceof T3Down ? new Error("T3 is not running; thread not created") : e;
       }
       store.markSeen(seenId(item, ctx), { ...t, createdAt: new Date().toISOString() });
-      return { message: "Thread started", threadId: t.threadId, threadUrl: t.url, reused: false };
+      return { message: t.editor && t.editor !== "t3" ? `Opened in ${editorName()}` : "Thread started", threadId: t.threadId, threadUrl: t.url, reused: false };
     },
   };
 }
 
 const prName = (item, { repo, number }) => `${repo}#${number}${item.url ? ` (${item.url})` : ""}`;
 const isPr = (ctx) => ctx.ref.type === "pr";
-const reviewRequest = (item, ctx) => isPr(ctx) && item.kind === "needs_you" && ctx.mine === false;
+const reviewRequest = (item, ctx) => isPr(ctx) && item.kind === "needs_you" && ctx.mine === false && (item.attention === undefined || item.attention === "review");
 const OPEN_LABEL = { pr: "Open PR", jira: "Open ticket", other: "Open link" };
 
 // Order is priority: the first entry that applies and whose primary() holds is the row's primary action.
@@ -120,7 +121,7 @@ export const ACTIONS = {
   merge: {
     label: "Merge",
     appliesTo: (item, ctx) => isPr(ctx) && ctx.mine === true,
-    primary: (item) => item.kind === "needs_you",
+    primary: (item) => item.kind === "needs_you" && item.attention === undefined,
     done: true,
     confirm: (item, ctx) => mergePreview(ctx.ref),
     run: async (item, { ref }, input) => {
@@ -173,7 +174,8 @@ export async function listActions(item, ctx) {
   for (const [id, a] of Object.entries(ACTIONS)) {
     if (!a.appliesTo(item, ctx)) continue;
     const needsConfirm = a.t3 ? !!(await a.confirm(item, ctx)).needsPath : !!a.confirm;
-    list.push({ id, label: typeof a.label === "function" ? a.label(ctx.ref) : a.label, needsConfirm, ...(a.href && { href: a.href(item) }), primary: false });
+    const label = typeof a.label === "function" ? a.label(ctx.ref) : a.label;
+    list.push({ id, label: a.t3 ? label.replace(/T3/g, editorName()) : label, needsConfirm, ...(a.href && { href: a.href(item) }), primary: false });
   }
   const first = list.find((x) => ACTIONS[x.id].primary?.(item, ctx));
   if (first) first.primary = true;

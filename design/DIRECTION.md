@@ -63,3 +63,48 @@ Gap: no screenshots were inspected, so layout specifics below come from the docu
 ## Memorable detail
 
 The week strip under the schedule: seven day columns showing the actual next runs, so "every 30 minutes, 8 to 6, weekdays" reads as a shape (busy weekdays, empty weekend) instead of a cron string.
+
+
+## Inbox ownership update
+
+The user's question is now "is this my turn, or am I waiting?" Preserve the existing reference lock, tokens, row controls, keyboard navigation, and compact single-column lists. No new visual language or media.
+
+References reviewed through Refero: [Amie grouped task list](https://refero.design/pages/57ffa397-9adf-4278-b432-89d417ae8480) for vertically grouped task rows and [Hello Ivy task statuses](https://refero.design/pages/6e885ff3-df28-46a7-83c2-3888e8c4f07a) for separating Waiting from To Do. Borrow status separation only from Hello Ivy; keep RoutineBar's list layout rather than adopting its board.
+
+| Decision | Source | Role | Why |
+|---|---|---|---|
+| PRs to review, Your next steps, Waiting on others | User request; Hello Ivy status groups | Section headings, no added status colors | Distinguishes an actual review from a decision or someone else's blocker |
+| Name the waiting person and show the next step on each row | User request | Plain row text | Answers who acts next and what must happen |
+| Waiting items stay visible but do not count as needing the user | User request; Amie grouped lists | Summary and count | Tracking a dependency should not ask the user to act |
+| Explicit agent fields; old data asks for clarification | Existing output contract | Classification comes from routine evidence | Avoids guessing responsibility from PR ownership or keywords |
+
+
+## Teams monitor settings
+
+Preserve the existing editor sections, neutral tokens, labeled fields, native checkboxes, and schedule builder. Direct build from the existing product target, with no new visual system or media.
+
+References reviewed through Refero: [Linear notification settings](https://refero.design/pages/04b0ed10-0720-4ebf-9635-cddad75ff7a8) for separating connection status from event preferences; [Fibery notification settings](https://refero.design/pages/2a0855d1-333d-4cd0-84be-1e4b671e715d) for independent mention filters.
+
+| Decision | Source | Role | Why |
+|---|---|---|---|
+| Monitor Teams entry point, routine type, team/channel fields | User request; existing editor | Configuration fields | Users select the channel without writing an agent prompt |
+| Personal mention checkbox, group tag list, reply checkbox | User request; Fibery notification preferences | Independent event filters | Allows personal mentions, group tags, or both |
+| Separate Check access button and status | Linear notification channels | Connection status, not a saved preference | Shows sign-in requirements without claiming the channel has been verified |
+| Reuse Schedule; optional extra guidance; hide code-thread settings | Existing design; agent-based monitoring | Scheduling and instructions | Keeps irrelevant code settings out of the monitor setup |
+
+
+Group-chat support follows the same reference lock and the user's Guest Services Support screenshots. Conversation type uses the existing segmented control. Group chats show a display-name field and a chat-link/ID field; channel-only team, channel, group-tag, and thread-reply fields are hidden. The exact chat ID identifies the source; its name is only a label. Personal @mentions are selected for group chats. Existing channel monitors retain their behavior.
+
+
+Mac Teams source update: the user's requirement is to use the installed Mac client. Keep the group-chat form and existing design lock. Replace connector status with a local-cache check showing message/mention counts and last cached message time. Explain downloaded-message coverage in the form, disable unavailable channel selection, and default new monitors to Group chat. No Microsoft 365 sign-in is required for this source.
+
+
+## Check freshness
+
+Show a compact expandable summary above inbox groups: oldest and latest completed check across enabled routines, counts for never checked, failed, and running. Expand to see every enabled routine sorted oldest first with links to its run. Include routines with no inbox findings. Failed runs and Teams cache access failures do not refresh the completion time. Reuse neutral text, hairlines, relative times, and native details disclosure; preserve its open state across polling.
+
+Waiting-row scanability: show the waiting person or check on a standalone line with the blocker in semibold. Keep the item title and actions visible; collect the full next step and context into one native Follow-up details disclosure. Preserve expanded rows across inbox polling. No new status colors.
+
+Settings extends the existing sectioned editor layout with four groups: editor destination and T3 connection, agent defaults, scheduled-check permissions, and CLI paths. Preserve native selects, labeled inputs, the sticky save bar, keyboard focus, and neutral status text. Editor choices explain that VS Code/Cursor use Terminal for the interactive CLI. Existing routine overrides are explicit; new routines opt into shared coding defaults. Navigation includes Settings and scrolls horizontally on narrow screens.
+
+Desktop notifications reuse the Settings sections: enabled checkbox, attention/all mode select, test button, and delivery-status text. Explain the macOS Script Editor permission channel and Focus behavior. Attention mode alerts for newly actionable work, failures, blocked task launches, and new coding sessions, without repeating unchanged waiting items.

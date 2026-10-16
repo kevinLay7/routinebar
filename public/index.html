@@ -48,7 +48,7 @@
 
   /* Header */
   .top { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
-  .top-in { max-width: 1040px; margin: 0 auto; padding: 0 var(--s5); height: 48px; display: flex; align-items: center; gap: var(--s5); }
+  .top-in { overflow-x: auto; max-width: 1040px; margin: 0 auto; padding: 0 var(--s5); height: 48px; display: flex; align-items: center; gap: var(--s5); }
   .brand { font-weight: 600; font-size: var(--t-sm); }
   .tabs { display: flex; gap: var(--s1); }
   .tabs a { color: var(--muted); padding: 6px 10px; border-radius: var(--r-control); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
@@ -124,6 +124,10 @@
   .row-note { margin-top: 2px; color: var(--text); opacity: 0.85; max-width: 72ch; text-wrap: pretty; }
   .row-note.tail { white-space: pre-line; }
   .row-note.muted { color: var(--muted); }
+  .waiting-on { margin-top: var(--s2); color: var(--muted); overflow-wrap: anywhere; }
+  .waiting-on strong { color: var(--text); font-weight: 600; }
+  .waiting-details { margin-top: var(--s2); }
+  .waiting-details p { margin: var(--s2) 0; }
   .row-meta { margin-top: 4px; color: var(--muted); font-size: var(--t-xs); letter-spacing: 0.01em; display: flex; flex-wrap: wrap; gap: 0 6px; }
   .row-meta > * + *::before { content: "·"; margin-right: 6px; color: var(--subtle); }
   .row-meta a { color: var(--muted); }
@@ -138,6 +142,12 @@
   .empty { padding: var(--s7) 0; }
   .empty .headline { margin-bottom: var(--s2); }
   .hint { color: var(--subtle); font-size: var(--t-xs); margin-top: var(--s5); }
+  .freshness { margin: 0 0 var(--s5); padding: var(--s3) 0; border-block: 1px solid var(--line); }
+  .freshness summary { cursor: pointer; color: var(--muted); }
+  .freshness summary strong { color: var(--text); font-weight: 500; }
+  .freshness ul { list-style: none; padding: 0; margin: var(--s3) 0 0; }
+  .freshness li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s1) var(--s4); padding: var(--s2) 0; }
+  .freshness li > span { color: var(--muted); }
 
   /* Tables */
   .table-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-group); overflow: hidden; }
@@ -246,6 +256,7 @@
       <a href="#inbox">Inbox <span class="count" id="inboxCount"></span></a>
       <a href="#routines">Routines</a>
       <a href="#runs">Runs</a>
+      <a href="#settings">Settings</a>
     </nav>
   </div>
 </header>
@@ -264,6 +275,7 @@
 </dialog>
 <script type="module">
 import { parseCron, matches, describe } from "/cron.mjs";
+import { inboxModel, summaryLine, freshnessModel } from "/inbox-model.mjs";
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -290,7 +302,7 @@ async function startRoutine(path) {
 
 let toastTimer;
 function toast(msg, link) {
-  $("#toast").innerHTML = esc(msg) + (link ? `<a href="${esc(link)}" target="_blank" rel="noopener">Open thread</a>` : "");
+  $("#toast").innerHTML = esc(msg) + (link ? `<a href="${esc(link)}" target="_blank" rel="noopener">Open session</a>` : "");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ($("#toast").textContent = ""), link ? 8000 : 3500);
 }
@@ -422,33 +434,17 @@ addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); });
 const views = {};
 let inboxSnapshot = "";
 let failedOpen = false;
-
-function inboxModel(entries) {
-  const review = [], t3 = [], failed = [];
-  for (const e of entries) {
-    if (e.state === "failed") { failed.push({ e, key: `${e.runId}` }); continue; }
-    if (!e.items.length) { review.push({ e, key: `${e.runId}` }); continue; }
-    for (const item of e.items) {
-      const thread = item.kind === "code" && e.threads.find((t) => t.key === item.key);
-      (thread ? t3 : review).push({ e, item, thread, key: `${e.runId}|${item.key}` });
-    }
-  }
-  return { review, t3, failed };
-}
+const expandedWaiting = new Set();
 
 const isPr = (i) => /^pr:/.test(i?.key ?? "");
-function summaryLine({ review, t3, failed }) {
-  const total = review.length + t3.length + failed.length;
-  if (!total) return null;
-  const noun = review.every((r) => isPr(r.item)) ? (review.length === 1 ? "PR" : "PRs") : review.length === 1 ? "item" : "items";
-  const parts = [review.length && `${review.length} ${noun} to review`, t3.length && `${t3.length} started in T3`, failed.length && `${failed.length} failed ${failed.length === 1 ? "run" : "runs"}`].filter(Boolean);
-  return { total, head: `${total} ${total === 1 ? "thing needs" : "things need"} you`, parts };
-}
 
 function inboxRow({ e, item, thread, key }) {
   const viewRun = `<a class="btn primary" data-primary href="#runs/${esc(e.runId)}">View run</a>`;
   const title = item ? item.title : e.summary || "Run needs you";
   const note = item?.note;
+  const nextStep = item?.nextStep;
+  const waiting = item?.attention === "waiting";
+  const responsibility = item?.attention === "waiting" ? `Waiting on ${item.waitingOn || "another person or check"}` : item?.attention === "review" ? "Your review" : "Your next step";
   const actions = item ? itemActions(e.runId, item, viewRun, thread?.url) : `${viewRun}`;
   const meta = [
     thread && `<span>${thread.reused ? "Existing thread" : "Thread started"}</span>`,
@@ -459,7 +455,12 @@ function inboxRow({ e, item, thread, key }) {
   return `<li class="row" tabindex="0" data-key="${esc(key)}" data-run="${esc(e.runId)}" data-item="${esc(item?.key ?? "")}" data-open="${esc(thread?.url ?? item?.url ?? `#runs/${e.runId}`)}">
     <div class="row-main">
       <div class="row-title">${esc(title)}</div>
-      ${note ? `<div class="row-note">${esc(note)}</div>` : ""}
+      ${waiting ? `<div class="waiting-on">Waiting on <strong>${esc(item.waitingOn || "another person or check")}</strong></div>
+        <details class="disclosure row-note waiting-details" ${expandedWaiting.has(key) ? "open" : ""}><summary>Follow-up details</summary>
+          <p><strong>Next step:</strong> ${esc(nextStep || "Check the run details to confirm what you need to do.")}</p>
+          ${note ? `<p><strong>Context from last check:</strong> ${esc(note)}</p>` : ""}
+        </details>` : `${item ? `<div class="row-note"><strong>${esc(responsibility)}:</strong> ${esc(nextStep || "Check the run details to confirm what you need to do.")}</div>` : ""}
+      ${note ? nextStep ? `<details class="disclosure row-note"><summary>Context from last check</summary><div>${esc(note)}</div></details>` : `<div class="row-note">${esc(note)}</div>` : ""}`}
       <div class="row-meta">${meta}</div>
       ${rowError(key)}
     </div>
@@ -495,7 +496,7 @@ const actionBtn = (a, attrs) => a.href
 function itemActions(runId, item, fallback = "", threadUrl) {
   rowItems.set(`${runId}|${item.key}`, item);
   const main = threadUrl ? null : item.actions.find((a) => a.primary);
-  const primary = threadUrl ? `<a class="btn primary" data-primary href="${esc(threadUrl)}" target="_blank" rel="noopener">Open thread</a>` : main ? actionBtn(main, `class="btn primary" data-primary`) : fallback;
+  const primary = threadUrl ? `<a class="btn primary" data-primary href="${esc(threadUrl)}" target="_blank" rel="noopener">Open session</a>` : main ? actionBtn(main, `class="btn primary" data-primary`) : fallback;
   const more = item.actions.length > (main ? 1 : 0) ? `<button type="button" class="btn quiet more" data-more aria-haspopup="menu" aria-expanded="false" aria-label="More actions" title="More actions (A)">⋯</button>` : "";
   return primary + more;
 }
@@ -590,9 +591,9 @@ async function openConfirm(row, a) {
   let p;
   try { p = await post(`${actionUrl(row.dataset.run, item.key, a.id)}/preview`); } catch (e) { body.innerHTML = ""; status.innerHTML = `<span class="state failed">Couldn't load</span> ${esc(e.message)}`; return; }
   if (p.needsPath) {
-    body.innerHTML = `<div class="field" style="margin-bottom:var(--s5)"><label for="actPath">Local repo</label><input id="actPath" class="wide mono-in" placeholder="/Users/you/Projects/repo" spellcheck="false" autocomplete="off"><span class="help">No local clone was found under ~/Projects. Enter the absolute path of a git repo for the thread.</span></div>`;
+    body.innerHTML = `<div class="field" style="margin-bottom:var(--s5)"><label for="actPath">Local repo</label><input id="actPath" class="wide mono-in" placeholder="/Users/you/Projects/repo" spellcheck="false" autocomplete="off"><span class="help">No local clone was found under ~/Projects. Enter the absolute path of a git repo for the task.</span></div>`;
   } else if (p.reuse || p.repoPath) {
-    body.innerHTML = `<p style="margin:0 0 var(--s5)">${p.reuse ? "This item already has a thread; it opens again." : `The thread opens in <span class="mono">${esc(p.repoPath)}</span>.`}</p>`;
+    body.innerHTML = `<p style="margin:0 0 var(--s5)">${p.reuse ? "This item already has a thread; it opens again." : `The task opens in <span class="mono">${esc(p.repoPath)}</span>.`}</p>`;
   } else {
     body.innerHTML = `<dl class="sched" style="margin:0 0 var(--s5);row-gap:var(--s2)">
       <dt>Pull request</dt><dd><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> <span class="muted mono">${esc(p.headRefName)}</span></dd>
@@ -626,31 +627,62 @@ document.addEventListener("click", (ev) => {
   if (act) trigger(rowOf(act), act.dataset.action, act);
 });
 
+let freshnessOpen = false;
+function freshnessHtml(routines) {
+  const f = freshnessModel(routines);
+  if (!f.active.length) return `<p class="sub">No routines are on. <a href="#routines">Manage routines</a></p>`;
+  const parts = [
+    f.oldest ? `Oldest check ${timeEl(f.oldest)}` : "No completed checks yet",
+    f.newest && f.newest !== f.oldest && `latest ${timeEl(f.newest)}`,
+    f.unchecked && `${f.unchecked} never checked`,
+    f.failed && `${f.failed} failed`,
+    f.running && `${f.running} running`,
+  ].filter(Boolean);
+  return `<details class="freshness" ${freshnessOpen ? "open" : ""}>
+    <summary><strong>Check freshness</strong> · ${parts.join(" · ")}</summary>
+    <p class="help">Last completed check for each enabled routine, oldest first. Failed and running checks do not refresh results.</p>
+    <ul>${f.active.map((r) => `<li><a href="#routines/${esc(r.id)}">${esc(r.name)}</a><span>${r.lastCompletedRun ? `<a href="#runs/${esc(r.lastCompletedRun.id)}">Checked ${timeEl(r.lastCompletedRun.finishedAt)}</a>` : "Never checked"}${r.lastRun?.state === "failed" ? ` · <a href="#runs/${esc(r.lastRun.id)}">Latest check failed</a>` : r.lastRun?.state === "running" ? ` · <a href="#runs/${esc(r.lastRun.id)}">Checking now</a>` : ""}</span></li>`).join("")}</ul>
+  </details>`;
+}
+function bindFreshness(el) {
+  const details = $(".freshness", el);
+  if (details) details.ontoggle = () => (freshnessOpen = details.open);
+}
+
 views.inbox = async (el, _, { poll } = {}) => {
-  const data = await api("/api/inbox");
-  const snap = JSON.stringify(data);
+  const [data, routines] = await Promise.all([api("/api/inbox"), api("/api/routines")]);
+  const snap = JSON.stringify([data, routines]);
   if (poll && snap === inboxSnapshot) return;
   inboxSnapshot = snap;
   const focusKey = document.activeElement?.closest?.(".row")?.dataset.key;
   const m = inboxModel(data.entries);
   const line = summaryLine(m);
-  $("#inboxCount").textContent = line?.total ?? "";
+  $("#inboxCount").textContent = line?.actionable || "";
   if (!line) {
-    const routines = await api("/api/routines");
     const next = routines.filter((r) => r.nextRun).sort((a, b) => a.nextRun.localeCompare(b.nextRun))[0];
     el.innerHTML = `<div class="empty">
       <h1 class="headline">Nothing needs you</h1>
       <p class="sub">${next ? `Next check: <a href="#routines/${esc(next.id)}">${esc(next.name)}</a> ${timeEl(next.nextRun)}.` : `No routine is switched on. <a href="#routines">Turn one on</a> to start filling this inbox.`}</p>
-    </div>`;
+    </div>${freshnessHtml(routines)}`;
+    bindFreshness(el);
     return;
   }
   el.innerHTML = `
     <div class="page-head"><div class="grow"><h1 class="headline">${line.head}</h1><p class="sub">${line.parts.join(" · ")}</p></div></div>
-    ${m.review.length ? `<section class="group"><h2 class="group-head caps">Needs your review</h2><ul class="list">${m.review.map(inboxRow).join("")}</ul></section>` : ""}
-    ${m.t3.length ? `<section class="group"><h2 class="group-head caps">Started in T3</h2><ul class="list">${m.t3.map(inboxRow).join("")}</ul></section>` : ""}
+    ${freshnessHtml(routines)}
+    ${m.review.length ? `<section class="group"><h2 class="group-head caps">PRs to review</h2><ul class="list">${m.review.map(inboxRow).join("")}</ul></section>` : ""}
+    ${m.action.length ? `<section class="group"><h2 class="group-head caps">Your next steps</h2><ul class="list">${m.action.map(inboxRow).join("")}</ul></section>` : ""}
+    ${m.waiting.length ? `<section class="group"><h2 class="group-head caps">Waiting on others</h2><ul class="list">${m.waiting.map(inboxRow).join("")}</ul></section>` : ""}
+    ${m.t3.length ? `<section class="group"><h2 class="group-head caps">Coding sessions</h2><ul class="list">${m.t3.map(inboxRow).join("")}</ul></section>` : ""}
     ${m.failed.length ? `<details class="group" ${failedOpen ? "open" : ""}><summary><span class="caps">Failed runs</span><span class="subtle">${m.failed.length}</span></summary><ul class="list">${m.failed.map(failedRow).join("")}</ul></details>` : ""}
     <p class="hint"><span class="kbd">J</span> <span class="kbd">K</span> move, <span class="kbd">O</span> open, <span class="kbd">Enter</span> main action, <span class="kbd">A</span> more actions, <span class="kbd">D</span> done</p>`;
   const det = $("details.group", el);
+  bindFreshness(el);
+  for (const details of $$(".waiting-details", el)) details.ontoggle = () => {
+    const key = details.closest(".row").dataset.key;
+    if (details.open) expandedWaiting.add(key);
+    else expandedWaiting.delete(key);
+  };
   if (det) det.ontoggle = () => (failedOpen = det.open);
   if (focusKey) $$(".row", el).find((r) => r.dataset.key === focusKey)?.focus();
 };
@@ -703,12 +735,12 @@ views.routines = async (el, id) => {
   const list = (await api("/api/routines")).sort((a, b) => b.enabled - a.enabled || a.name.localeCompare(b.name));
   const on = list.filter((r) => r.enabled).length;
   el.innerHTML = `
-    <div class="page-head"><div class="grow"><h1 class="headline">Routines</h1><p class="sub">${list.length} ${list.length === 1 ? "routine" : "routines"}, ${on} on</p></div><button type="button" class="btn" id="importBtn">Import</button><a class="btn primary" href="#routines/new">New routine</a></div>
+    <div class="page-head"><div class="grow"><h1 class="headline">Routines</h1><p class="sub">${list.length} ${list.length === 1 ? "routine" : "routines"}, ${on} on</p></div><button type="button" class="btn" id="importBtn">Import</button><a class="btn" href="#routines/new?type=teams">Monitor Teams</a><a class="btn primary" href="#routines/new">New routine</a></div>
     <div class="table-wrap"><table>
       <thead><tr><th style="width:56px"><span class="sr">On</span></th><th>Routine</th><th>Schedule</th><th class="hide-narrow">Last run</th><th class="nowrap">Next</th><th class="right"><span class="sr">Actions</span></th></tr></thead>
       <tbody>${list.map((r) => `<tr class="link${r.enabled ? "" : " off"}" data-id="${esc(r.id)}">
         <td><button class="switch" role="switch" aria-checked="${r.enabled}" aria-label="${r.enabled ? "Turn off" : "Turn on"} ${esc(r.name)}"></button></td>
-        <td class="name"><a href="#routines/${esc(r.id)}">${esc(r.name)}</a><div class="muted">${AGENT_LABEL[r.agent]} · <span class="mono">${esc(r.model)}</span>${r.importedFrom ? ` · From ${esc(SOURCE_LABEL[r.importedFrom.source] ?? r.importedFrom.source)}` : ""}</div></td>
+        <td class="name"><a href="#routines/${esc(r.id)}">${esc(r.name)}</a><div class="muted">${r.teams ? `Teams · ${r.teams.source === "chat" ? esc(r.teams.chatName) : `${esc(r.teams.team)} / ${esc(r.teams.channel)}`} · ` : ""}${AGENT_LABEL[r.agent]} · <span class="mono">${esc(r.model)}</span>${r.importedFrom ? ` · From ${esc(SOURCE_LABEL[r.importedFrom.source] ?? r.importedFrom.source)}` : ""}</div></td>
         <td>${r.importedFrom?.needsSchedule ? NEEDS_SCHEDULE : esc(scheduleText(r.schedule))}</td>
         <td class="hide-narrow nowrap">${r.lastRun ? `<a href="#runs/${esc(r.lastRun.id)}" class="state quiet ${r.lastRun.state}" title="${esc(STATE[r.lastRun.state])}">${timeEl(r.lastRun.finishedAt ?? r.lastRun.startedAt)}</a>` : `<span class="subtle">Never</span>`}</td>
         <td class="nowrap">${r.nextRun ? timeEl(r.nextRun) : `<span class="subtle">Off</span>`}</td>
@@ -856,7 +888,7 @@ async function runDetail(el, id) {
     </li>`).join("")}</ul></section>` : ""}
     ${run.threads.length ? `<section class="group"><h2 class="group-head caps">T3 threads</h2><ul class="list">${run.threads.map((t) => `<li class="row">
       <div class="row-main"><div class="row-title mono" style="font-size:var(--t-sm)">${esc(t.key)}</div><div class="row-meta"><span>${t.reused ? "Existing thread, linked again" : "New thread"}</span></div></div>
-      <div class="row-actions"><a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">Open thread</a></div></li>`).join("")}</ul></section>` : ""}
+      <div class="row-actions"><a class="btn" href="${esc(t.url)}" target="_blank" rel="noopener">Open session</a></div></li>`).join("")}</ul></section>` : ""}
     <details class="disclosure"><summary>Raw log</summary><pre class="log">${esc(run.log) || "(empty)"}</pre></details>
     ${run.err ? `<details class="disclosure"><summary>Errors and warnings</summary><pre class="log">${esc(run.err)}</pre></details>` : ""}`;
   if ($("#again", el)) $("#again", el).onclick = () => startRoutine(`/api/runs/${encodeURIComponent(run.id)}/rerun`);
@@ -903,23 +935,39 @@ function readBuilder(root, mode) {
 }
 
 async function editor(el, id) {
-  const [routines, models] = await Promise.all([api("/api/routines"), api("/api/models")]);
+  const [routines, models, prefs] = await Promise.all([api("/api/routines"), api("/api/models"), api("/api/settings")]);
   const existing = id ? routines.find((x) => x.id === id) : null;
   if (id && !existing) throw new Error("No such routine.");
-  const r = existing ?? { name: "", enabled: false, schedule: "0 9 * * 1-5", agent: "claude", model: "opus", cwd: "", prompt: "", t3: { provider: "claudeAgent", model: models.t3.claudeAgent[0], runtimeMode: "approval-required" } };
+  const newTeams = !existing && new URLSearchParams(location.hash.split("?")[1]).get("type") === "teams";
+  const r = existing ?? { name: newTeams ? "Teams mentions" : "", enabled: false, schedule: newTeams ? "*/10 8-18 * * 1-5" : "0 9 * * 1-5", agent: prefs.defaultAgent, model: prefs[`${prefs.defaultAgent}Model`], cwd: models.defaultCwd ?? "", prompt: "", t3: { provider: prefs.defaultAgent === "claude" ? "claudeAgent" : "codex", model: prefs[`${prefs.defaultAgent}Model`], runtimeMode: prefs.taskPermissions, useDefaults: true } };
+  const teams = r.teams ?? { team: "", channel: "", personalMentions: true, tags: [], includeReplies: true, lookbackHours: 24 };
   let sched = fromCron(r.schedule) ?? { mode: "custom" };
   const needsSchedule = !!r.importedFrom?.needsSchedule;
 
   el.innerHTML = `<form id="ed" novalidate>
-    <div class="page-head"><div class="grow"><a class="back" href="#routines">← Routines</a><h1 class="headline">${existing ? esc(r.name) : "New routine"}</h1>${existing ? `<p class="sub mono">${esc(r.id)}</p>` : ""}</div>
+    <div class="page-head"><div class="grow"><a class="back" href="#routines">← Routines</a><h1 class="headline">${existing ? esc(r.name) : newTeams ? "New Teams monitor" : "New routine"}</h1>${existing ? `<p class="sub mono">${esc(r.id)}</p>` : ""}</div>
       <label class="inline" style="font-weight:500"><span id="onLabel">${r.enabled ? "On" : "Off"}</span><button type="button" class="switch" id="enabled" role="switch" aria-checked="${r.enabled}" aria-label="Run on schedule"></button></label></div>
 
     <section class="sect"><div class="sect-head"><h2>Basics</h2><p>What runs, and where.</p></div><div class="sect-body">
       <div class="field"><label for="name">Name</label><input id="name" class="wide" value="${esc(r.name)}" placeholder="Review requested PRs" autocomplete="off" required></div>
+      <div class="field"><span class="label">Routine type</span>${radios("routineType", [["instructions", "Instructions"], ["teams", "Teams monitor"]], r.teams || newTeams ? "teams" : "instructions")}</div>
       <div class="field"><span class="label">Agent</span>${radios("agent", AGENTS, r.agent)}</div>
       <div class="field" id="commandField"><label for="command">Command</label><input id="command" class="wide mono-in" value="${esc(r.command)}" spellcheck="false" autocomplete="off" placeholder="my-agent --model &quot;$MODEL&quot; &quot;$PROMPT&quot;"><span class="help">Runs with sh. Gets $PROMPT and $MODEL in its environment and must print the result block.</span></div>
       <div class="field"><label for="model">Model</label><input id="model" class="wide mono-in" list="modelList" value="${esc(r.model)}" spellcheck="false" autocomplete="off" required><datalist id="modelList"></datalist><div class="suggest" id="modelSuggest"></div></div>
       <div class="field"><label for="cwd">Working directory</label><input id="cwd" class="wide mono-in" value="${esc(r.cwd)}" placeholder="/Users/you/Projects" spellcheck="false" autocomplete="off" required><span class="help">The agent starts in this folder. Code threads open here too unless an item names its own repo.</span></div>
+    </div></section>
+
+    <section class="sect" id="teamsSection" hidden><div class="sect-head"><h2>Teams monitoring</h2><p>One channel or group chat per routine. Find mentions that need you and keep track of who acts next.</p></div><div class="sect-body">
+      <div class="field"><span class="label">Conversation type</span>${radios("teamsSource", [["channel", "Channel"], ["chat", "Group chat"]], teams.source ?? (r.teams ? "channel" : "chat"))}<span class="help">Mac client monitoring currently supports group chats.</span></div>
+      <div class="field" id="teamsChatNameField" hidden><label for="teamsChatName">Chat name</label><input id="teamsChatName" class="wide" value="${esc(teams.chatName)}" placeholder="(GSS) Guest Services Support" maxlength="200" autocomplete="off"><span class="help">A display name to recognize this monitor.</span></div>
+      <div class="field" id="teamsChatIdField" hidden><label for="teamsChatId">Chat link or ID</label><input id="teamsChatId" class="wide" value="${esc(teams.chatId)}" placeholder="https://teams.microsoft.com/l/chat/19:…/conversations" autocomplete="off"><span class="help">Paste the group-chat link from Teams. The monitor uses its exact chat ID.</span></div>
+      <div class="field" id="teamsTeamField"><label for="teamsTeam">Team</label><input id="teamsTeam" class="wide" value="${esc(teams.team)}" placeholder="Engineering" maxlength="200" autocomplete="off"><span class="help">Exact team name or ID.</span></div>
+      <div class="field" id="teamsChannelField"><label for="teamsChannel">Channel</label><input id="teamsChannel" class="wide" value="${esc(teams.channel)}" placeholder="Backend" maxlength="200" autocomplete="off"><span class="help">Exact channel name or ID within this team.</span></div>
+      <div class="field"><span class="label">Watch for</span><label class="inline"><input type="checkbox" id="teamsPersonal" ${teams.personalMentions ? "checked" : ""}> @mentions of me</label><span class="help">Uses the account signed in to the Mac Teams client.</span></div>
+      <div class="field" id="teamsTagsField"><label for="teamsTags">Group tags</label><textarea id="teamsTags" rows="3" placeholder="Engineering&#10;On-call">${esc(teams.tags.join("\n"))}</textarea><span class="help">One Teams tag per line, with or without @. Matches personal mentions or any listed tag, not ordinary keywords. Leave empty to watch only personal mentions.</span></div>
+      <div class="field" id="teamsRepliesField"><label class="inline"><input type="checkbox" id="teamsReplies" ${teams.includeReplies ? "checked" : ""}> Include mentions in thread replies</label></div>
+      <div class="field"><label for="teamsLookback">Look for new mentions from the last</label><select id="teamsLookback">${[...new Set([1, 6, 24, 72, 168, teams.lookbackHours])].sort((a, b) => a-b).map(h => `<option value="${h}" ${h === teams.lookbackHours ? "selected" : ""}>${h === 1 ? "Hour" : h < 24 ? `${h} hours` : `${h / 24} ${h === 24 ? "day" : "days"}`}</option>`).join("")}</select><span class="help">Previously tracked, unresolved mentions stay in the inbox until resolved or marked Done.</span></div>
+      <div class="field"><span class="label">Teams access</span><div class="inline"><button type="button" class="btn" id="teamsCheck">Check access</button><span class="help" id="teamsAccess" role="status">Not checked. Reads the signed-in Mac Teams client cache; no Microsoft 365 connector is needed.</span></div><span class="help">Only messages downloaded by the Mac client are covered. Open the chat in Teams to refresh it. After saving, use Run now to check the monitor.</span></div>
     </div></section>
 
     <section class="sect"><div class="sect-head"><h2>Schedule</h2><p>Local time. Runs missed while the Mac sleeps are skipped.</p></div><div class="sect-body">
@@ -931,14 +979,17 @@ async function editor(el, id) {
         <div class="field" style="margin-top:var(--s3)"><input id="cron" class="wide mono-in" value="${esc(r.schedule)}" spellcheck="false" autocomplete="off" aria-label="Cron expression"><span class="help" id="cronHelp"></span></div></details>
     </div></section>
 
-    <section class="sect"><div class="sect-head"><h2>Instructions</h2><p id="promptHelp"></p></div><div class="sect-body">
+    <section class="sect"><div class="sect-head"><h2 id="instructionsTitle">Instructions</h2><p id="promptHelp"></p></div><div class="sect-body">
       <textarea id="prompt" rows="16" spellcheck="false" aria-label="Instructions">${esc(r.prompt)}</textarea>
     </div></section>
 
-    <section class="sect"><div class="sect-head"><h2>When code is needed</h2><p>For each code item a run reports, RoutineBar opens one T3 Code thread with these settings.</p></div><div class="sect-body">
-      <div class="field"><span class="label">Thread runs on</span>${radios("provider", PROVIDERS, r.t3.provider)}</div>
+    <section class="sect" id="t3Section"><div class="sect-head"><h2>When code is needed</h2><p>Code tasks open in the editor chosen in Settings. Existing routines can keep their own agent and permission choices.</p></div><div class="sect-body">
+      <label class="inline"><input type="checkbox" id="useTaskDefaults" ${r.t3.useDefaults ? "checked" : ""}> Use the agent and permission defaults from <a href="#settings">Settings</a></label>
+      <div id="taskOverrides" class="sect-body" ${r.t3.useDefaults ? "hidden" : ""}>
+      <div class="field"><span class="label">Coding agent</span>${radios("provider", PROVIDERS, r.t3.provider)}</div>
       <div class="field"><label for="t3model">Model</label><input id="t3model" class="wide mono-in" list="t3List" value="${esc(r.t3.model)}" spellcheck="false" autocomplete="off" required><datalist id="t3List"></datalist><div class="suggest" id="t3Suggest"></div></div>
       <div class="field"><span class="label">Permissions</span>${radios("runtimeMode", MODES, r.t3.runtimeMode)}<span class="help" id="modeHelp"></span></div>
+      </div>
     </div></section>
     ${existing ? `<section class="sect"><div class="sect-head"><h2>Delete</h2><p>Past runs stay in Runs.</p></div><div class="sect-body"><div><button type="button" class="btn danger-text" id="del">Delete this routine</button></div></div></section>` : ""}
 
@@ -959,8 +1010,43 @@ async function editor(el, id) {
     const agent = radio("agent");
     $("#commandField", form).hidden = agent !== "custom";
     $("label[for=model]", form).textContent = agent === "custom" ? "Model (passed as $MODEL)" : "Model";
-    $("#promptHelp", form).textContent = agent === "custom" ? "Passed to the command as $PROMPT. Optional." : "What to check, what never to do, and how findings map to needs_you, code and fyi items. RoutineBar appends the output format.";
+    $("#promptHelp", form).textContent = radio("routineType") === "teams" ? "Optional extra guidance for deciding which mentions need you. Conversation, filters, and the read-only monitoring instructions are supplied automatically." : agent === "custom" ? "Passed to the command as $PROMPT. Optional." : "What to check, what never to do, and how findings map to needs_you, code and fyi items. RoutineBar appends the output format.";
     suggest("#modelList", "#modelSuggest", $("#model", form), models.agents[agent] ?? []);
+  };
+  const syncTeamsSource = () => {
+    const chat = radio("teamsSource") === "chat";
+    $('input[name=teamsSource][value=channel]', form).disabled = true;
+    for (const id of ["teamsChatNameField", "teamsChatIdField"]) $(`#${id}`, form).hidden = !chat;
+    for (const id of ["teamsTeamField", "teamsChannelField", "teamsTagsField", "teamsRepliesField"]) $(`#${id}`, form).hidden = chat;
+    $("#teamsPersonal", form).disabled = chat;
+    if (chat) $("#teamsPersonal", form).checked = true;
+  };
+  const syncType = () => {
+    const isTeams = radio("routineType") === "teams";
+    $("#teamsSection", form).hidden = !isTeams;
+    $("#t3Section", form).hidden = isTeams;
+    const custom = $('input[name=agent][value=custom]', form);
+    custom.disabled = isTeams;
+    if (isTeams && custom.checked) {
+      $('input[name=agent][value=claude]', form).checked = true;
+      $("#model", form).value = "opus";
+    }
+    $("#instructionsTitle", form).textContent = isTeams ? "Extra guidance" : "Instructions";
+    $("#prompt", form).rows = isTeams ? 5 : 16;
+    syncTeamsSource();
+    syncAgent();
+  };
+  let accessCheck = 0;
+  $("#teamsCheck", form).onclick = async () => {
+    const check = ++accessCheck;
+    const button = $("#teamsCheck", form), result = $("#teamsAccess", form);
+    button.disabled = true;
+    result.textContent = "Reading the Mac Teams cache…";
+    try {
+      const status = await post("/api/teams/access", { teams: body().teams });
+      if (check === accessCheck) result.textContent = status.message;
+    } catch (e) { if (check === accessCheck) result.textContent = e.message; }
+    finally { if (check === accessCheck) button.disabled = false; }
   };
   const syncT3 = () => {
     suggest("#t3List", "#t3Suggest", $("#t3model", form), models.t3[radio("provider")] ?? []);
@@ -1036,7 +1122,13 @@ async function editor(el, id) {
   const body = () => ({
     name: v("#name").trim(), enabled: enabledBtn.getAttribute("aria-checked") === "true", schedule: v("#cron"), agent: radio("agent"), model: v("#model").trim(),
     ...(radio("agent") === "custom" && { command: v("#command") }), cwd: v("#cwd").trim(), prompt: v("#prompt"),
-    t3: { provider: radio("provider"), model: v("#t3model").trim(), runtimeMode: radio("runtimeMode") },
+    ...(radio("routineType") === "teams" && { teams: {
+      source: radio("teamsSource"),
+      ...(radio("teamsSource") === "chat" ? { chatName: v("#teamsChatName").trim(), chatId: v("#teamsChatId").trim() } : { team: v("#teamsTeam").trim(), channel: v("#teamsChannel").trim() }),
+      personalMentions: radio("teamsSource") === "chat" || $("#teamsPersonal", form).checked,
+      tags: radio("teamsSource") === "chat" ? [] : v("#teamsTags").split("\n").map(t => t.trim().replace(/^@/, "").trim()).filter(Boolean), includeReplies: radio("teamsSource") === "chat" || $("#teamsReplies", form).checked, lookbackHours: Number(v("#teamsLookback")),
+    } }),
+    t3: { provider: radio("provider"), model: v("#t3model").trim(), runtimeMode: radio("runtimeMode"), useDefaults: $("#useTaskDefaults", form).checked },
     // Saving from the editor confirms the schedule, so needsSchedule is dropped here.
     ...(r.importedFrom && { importedFrom: { source: r.importedFrom.source, sourceId: r.importedFrom.sourceId } }),
   });
@@ -1050,7 +1142,17 @@ async function editor(el, id) {
   }
   form.addEventListener("input", (ev) => { if (!ev.target.closest("#builder, #cron")) changed(); });
   form.addEventListener("change", (ev) => {
-    if (ev.target.name === "agent") syncAgent();
+    if (ev.target.id === "useTaskDefaults") $("#taskOverrides", form).hidden = ev.target.checked;
+    if (ev.target.name === "routineType") syncType();
+    if (ev.target.name === "teamsSource") syncTeamsSource();
+    if (ev.target.name === "agent") {
+      const suggestedModel = models.agents[radio("agent")]?.[0];
+      if (suggestedModel) $("#model", form).value = suggestedModel;
+      syncAgent();
+      accessCheck++;
+      $("#teamsCheck", form).disabled = false;
+      $("#teamsAccess", form).textContent = "Not checked. Use Check access to read the local Mac Teams cache.";
+    }
     if (ev.target.name === "provider" || ev.target.name === "runtimeMode") syncT3();
     if (!ev.target.closest("#builder")) changed();
   });
@@ -1064,7 +1166,17 @@ async function editor(el, id) {
   form.onsubmit = async (ev) => {
     ev.preventDefault();
     const data = body();
-    const missing = [!data.name && "a name", !data.cwd.startsWith("/") && "an absolute working directory", data.agent === "custom" && !data.command?.trim() && "a command", data.agent !== "custom" && !data.prompt.trim() && "instructions", !data.model && "a model", !data.t3.model && "a thread model"].filter(Boolean);
+    const missing = [!data.name && "a name", !data.cwd.startsWith("/") && "an absolute working directory", data.agent === "custom" && !data.command?.trim() && "a command", data.agent !== "custom" && !data.teams && !data.prompt.trim() && "instructions", !data.model && "a model", !data.t3.model && "a thread model"].filter(Boolean);
+    if (data.teams) {
+      if (data.teams.source === "chat") {
+        if (!data.teams.chatName) missing.push("a chat name");
+        if (!data.teams.chatId) missing.push("a chat link or ID");
+      } else {
+        if (!data.teams.team) missing.push("a Teams team");
+        if (!data.teams.channel) missing.push("a Teams channel");
+      }
+      if (!data.teams.personalMentions && !data.teams.tags.length) missing.push("personal mentions or a group tag");
+    }
     if (missing.length) return changed(`Add ${listFmt.format(missing)}.`);
     let rid = existing?.id;
     if (!rid) {
@@ -1091,13 +1203,102 @@ async function editor(el, id) {
     location.hash = "#routines";
   };
 
-  syncAgent();
+  syncType();
   syncT3();
   renderBuilder();
   showSchedule(r.schedule);
   changed();
   if (!existing) $("#name", form).focus();
 }
+
+/* Settings */
+views.settings = async (el) => {
+  const [prefs, models] = await Promise.all([api('/api/settings'), api('/api/models')]);
+  const options = (items, value) => items.map(([v, label]) => `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(label)}</option>`).join('');
+  const field = (id, label, help = '') => `<div class="field"><label for="${id}">${label}</label><input id="${id}" class="wide mono-in" value="${esc(prefs[id])}" autocomplete="off" spellcheck="false">${help ? `<span class="help">${help}</span>` : ''}</div>`;
+  el.innerHTML = `<form id="settingsForm">
+    <div class="page-head"><div class="grow"><h1 class="headline">Settings</h1><p class="sub">Where coding tasks open and how your agents run on this Mac.</p></div></div>
+    <section class="sect"><div class="sect-head"><h2>Editor</h2><p>Applies to code tasks from routines and inbox actions.</p></div><div class="sect-body">
+      <div class="field"><label for="editorChoice">Open coding tasks in</label><select id="editorChoice">${options([['t3', 'T3'], ['vscode', 'VS Code'], ['cursor', 'Cursor'], ['terminal', 'Terminal']], prefs.editor)}</select><span class="help" id="editorHelp"></span></div>
+      <div id="t3Connection" class="sect-body">${field('t3AppPath', 'T3 application path', 'Leave empty to detect T3 automatically. Use an absolute path ending in .app to choose another install.')}
+        <span class="help">Detected: ${esc(prefs.detectedT3App || 'No T3 installation found')}</span>
+        <div class="inline"><button type="button" class="btn" id="checkT3">Check connection</button><span class="help" id="t3Status" role="status"></span></div>
+      </div>
+    </div></section>
+    <section class="sect"><div class="sect-head"><h2>Agent defaults</h2><p>Used by new routines and code tasks set to use Settings defaults. Existing routine overrides stay in effect.</p></div><div class="sect-body">
+      <div class="field"><label for="defaultAgent">Default agent</label><select id="defaultAgent">${options([['claude','Claude'],['codex','Codex']], prefs.defaultAgent)}</select></div>
+      ${field('claudeModel', 'Claude model')}${field('codexModel', 'Codex model')}
+      <div class="field"><label for="taskPermissions">Coding task permissions</label><select id="taskPermissions">${options(MODES, prefs.taskPermissions)}</select><span class="help" id="taskPermissionHelp"></span></div>
+    </div></section>
+    <section class="sect"><div class="sect-head"><h2>Desktop notifications</h2><p>Alerts on this Mac, even when the dashboard is closed.</p></div><div class="sect-body">
+      <label class="inline"><input type="checkbox" id="desktopNotifications" ${prefs.desktopNotifications ? 'checked' : ''}> Enable desktop notifications</label>
+      <div class="field"><label for="notificationMode">Notify me about</label><select id="notificationMode">${options([['attention','New items needing me, failures, and coding sessions'],['all','Every completed run']], prefs.notificationMode)}</select><span class="help">Needs-attention alerts skip unchanged items and work waiting on others.</span></div>
+      <div class="inline"><button type="button" class="btn" id="testNotification">Send test notification</button><span class="help" id="notificationStatus" role="status"></span></div>
+      <span class="help">If no banner appears, allow Script Editor notifications in macOS System Settings → Notifications. Focus modes can silence banners.</span>
+    </div></section>
+    <section class="sect"><div class="sect-head"><h2>Scheduled checks</h2><p>Runs happen in the background using each routine's agent and model.</p></div><div class="sect-body">
+      <div class="field"><label for="scheduledPermissions">Background permissions</label><select id="scheduledPermissions">${options([['read-only','Read only'],['full-access','Full access']], prefs.scheduledPermissions)}</select><span class="help">Read only uses Claude plan mode or Codex's read-only sandbox. Full access allows unattended edits and commands without approval prompts. Custom-command routines use their own permissions.</span></div>
+    </div></section>
+    <section class="sect"><div class="sect-head"><h2>Command-line tools</h2><p>Used for background checks and Terminal sessions. Sign in through each tool before running routines.</p></div><div class="sect-body">
+      ${field('claudeCommand', 'Claude executable', 'Executable name on your login PATH, or an absolute path. No command arguments.')}
+      ${field('codexCommand', 'Codex executable', 'Executable name on your login PATH, or an absolute path. No command arguments.')}
+    </div></section>
+    <div class="savebar"><div class="savebar-in"><span class="status" id="settingsStatus" role="status"></span><button class="btn primary" id="saveSettings" disabled>Save settings</button></div></div>
+  </form>`;
+  const form = $('#settingsForm', el);
+  const value = id => $('#' + id, form).value;
+  const body = () => ({ editor: value('editorChoice'), desktopNotifications: $('#desktopNotifications', form).checked, notificationMode: value('notificationMode'), ...Object.fromEntries(['t3AppPath','defaultAgent','claudeModel','codexModel','taskPermissions','scheduledPermissions','claudeCommand','codexCommand'].map(k => [k, value(k).trim()])) });
+  let initial = JSON.stringify(body());
+  const sync = () => {
+    const t3 = value('editorChoice') === 't3';
+    $('#t3Connection', form).hidden = !t3;
+    $('#editorHelp', form).textContent = t3 ? 'T3 opens an agent thread directly.' : value('editorChoice') === 'terminal' ? 'Starts an interactive Claude or Codex session in macOS Terminal with the task prompt.' : 'Opens the project in this editor and starts Claude or Codex in macOS Terminal with the task prompt.';
+    $('#taskPermissionHelp', form).textContent = value('taskPermissions') === 'full-access' ? 'Allows edits and commands without asking.' : value('taskPermissions') === 'auto-accept-edits' ? 'Claude accepts file edits automatically. Codex uses workspace write access and asks for command approvals.' : 'Claude asks before edits and commands. Codex starts read only and can request approval for changes.';
+    dirty = initial !== JSON.stringify(body());
+    $('#saveSettings', form).disabled = !dirty;
+    $('#checkT3', form).disabled = dirty;
+    $('#testNotification', form).disabled = dirty || !$('#desktopNotifications', form).checked;
+    $('#notificationMode', form).disabled = !$('#desktopNotifications', form).checked;
+    $('#settingsStatus', form).textContent = dirty ? 'Unsaved changes. Save before checking the connection.' : '';
+  };
+  form.oninput = sync; form.onchange = sync;
+  $('#claudeModel', form).setAttribute('list', 'settingsClaudeModels');
+  $('#codexModel', form).setAttribute('list', 'settingsCodexModels');
+  form.insertAdjacentHTML('beforeend', `<datalist id="settingsClaudeModels">${models.t3.claudeAgent.map(v=>`<option value="${esc(v)}">`).join('')}</datalist><datalist id="settingsCodexModels">${models.t3.codex.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`);
+  $('#checkT3', form).onclick = async () => {
+    const button = $('#checkT3', form), status = $('#t3Status', form);
+    button.disabled = true; status.textContent = 'Connecting to T3…';
+    try { const result = await post('/api/settings/check-t3'); status.textContent = result.ok ? 'Connected to T3' : 'Could not connect'; }
+    catch (e) { status.textContent = e.message; }
+    finally { button.disabled = dirty; }
+  };
+  $('#testNotification', form).onclick = async () => {
+    const button = $('#testNotification', form), status = $('#notificationStatus', form);
+    button.disabled = true; status.textContent = 'Sending…';
+    try { await post('/api/settings/test-notification'); status.textContent = 'Sent to macOS. Check your notification banners.'; }
+    catch(e) { status.textContent = e.message; }
+    finally { button.disabled = dirty || !$('#desktopNotifications', form).checked; }
+  };
+  form.onsubmit = async ev => {
+    ev.preventDefault(); const button = $('#saveSettings', form); button.disabled = true;
+    const saved = JSON.stringify(body());
+    try { await api('/api/settings', { method: 'PUT', body: saved }); initial = saved; sync(); if (!dirty) $('#settingsStatus', form).textContent = 'Settings saved'; }
+    catch(e) { $('#settingsStatus', form).textContent = e.message; button.disabled = false; }
+  };
+  sync();
+};
+views.sessions = async (el, id) => {
+  const task = await api(`/api/sessions/${encodeURIComponent(id)}`);
+  el.innerHTML = `<div class="page-head"><div class="grow"><a class="back" href="#inbox">← Inbox</a><h1 class="headline">${esc(task.title)}</h1><p class="sub">Opened in ${esc(({vscode:'VS Code',cursor:'Cursor',terminal:'Terminal'})[task.editor])} on this Mac · ${timeEl(task.createdAt)}</p></div></div>
+    <section class="sect"><div class="sect-head"><h2>Agent session</h2><p>Continue in the Terminal window on your Mac.</p></div><div class="sect-body"><p>${esc(task.config.provider === 'claudeAgent' ? 'Claude' : 'Codex')} · <span class="mono">${esc(task.config.model)}</span></p><p class="mono">${esc(task.cwd)}</p><div><button class="btn" id="reopenSession">Start another session</button></div><span class="help">Opens another Terminal session with this task's original prompt and permissions.</span><p id="sessionStatus" role="status"></p></div></section>
+    <section class="sect"><div class="sect-head"><h2>Task prompt</h2></div><div class="sect-body"><pre class="log">${esc(task.prompt)}</pre></div></section>`;
+  $('#reopenSession', el).onclick = async ev => {
+    ev.target.disabled = true;
+    try { await post(`/api/sessions/${encodeURIComponent(id)}/open`); $('#sessionStatus', el).textContent = 'Opened on your Mac'; }
+    catch(e) { $('#sessionStatus', el).textContent = e.message; }
+    finally { ev.target.disabled = false; }
+  };
+};
 
 /* ---------- Router ---------- */
 const route = () => (location.hash.slice(1).split("?")[0] || "inbox").split("/")[0];
@@ -1120,7 +1321,7 @@ addEventListener("hashchange", () => {
 });
 render();
 async function refreshCount() {
-  try { $("#inboxCount").textContent = summaryLine(inboxModel((await api("/api/inbox")).entries))?.total ?? ""; } catch {}
+  try { $("#inboxCount").textContent = summaryLine(inboxModel((await api("/api/inbox")).entries))?.actionable || ""; } catch {}
 }
 // A poll never repaints under an open menu or dialog.
 setInterval(() => (route() === "inbox" && !menu.matches(":popover-open") && !$("dialog[open]") ? render({ poll: true }) : refreshCount()), 15e3);

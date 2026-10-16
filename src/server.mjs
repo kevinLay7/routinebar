@@ -5,10 +5,16 @@ import { join } from "node:path";
 import * as store from "./store.mjs";
 import { parseCron, matches, nextRuns, describe } from "./cron.mjs";
 import { AGENTS, startRun, runningRun, adoptRuns } from "./runner.mjs";
+import { validateTeams, checkTeamsAccess } from "./teams.mjs";
 import { seeds } from "./seeds.mjs";
 import { SOURCES, listSource } from "./importers.mjs";
 import { ACTIONS, contextFor, listActions, parseInput } from "./actions.mjs";
 import { inboxRuns, isDismissed, itemId, fingerprint, failedId, runRowId } from "./inbox.mjs";
+import { inboxModel, summaryLine } from "../public/inbox-model.mjs";
+import { settings, saveSettings, taskConfig, resolveT3App } from "./settings.mjs";
+import { checkT3 } from "./t3.mjs";
+import { session, openSession } from "./editor.mjs";
+import { notify } from "./notifications.mjs";
 
 const PORT = Number(process.env.ROUTINEBAR_PORT || 4141);
 const INDEX = new URL("../public/index.html", import.meta.url);
@@ -51,9 +57,15 @@ function validateRoutine(id, b) {
     throw new HttpError(400, `schedule: ${e.message}`);
   }
   const agent = oneOf("agent", b.agent, Object.keys(AGENTS));
+  let teams;
+  if (b.teams !== undefined) {
+    if (agent === "custom") throw new HttpError(400, "Teams monitors require Claude Code or Codex");
+    try { teams = validateTeams(b.teams); } catch (e) { throw new HttpError(400, e.message); }
+  }
   const cwd = str("cwd");
   if (!cwd.startsWith("/")) throw new HttpError(400, "cwd must be an absolute path");
   const t3 = b.t3 ?? {};
+  if (t3.useDefaults !== undefined && typeof t3.useDefaults !== "boolean") throw new HttpError(400, "t3.useDefaults must be a boolean");
   const from = b.importedFrom;
   if (from !== undefined && (typeof from?.source !== "string" || typeof from.sourceId !== "string" || ![undefined, true].includes(from.needsSchedule)))
     throw new HttpError(400, "importedFrom must be { source, sourceId, needsSchedule?: true }");
@@ -70,11 +82,13 @@ function validateRoutine(id, b) {
     model: str("model"),
     ...(agent === "custom" && { command: str("command") }),
     cwd,
-    prompt: agent === "custom" ? String(b.prompt ?? "") : str("prompt"),
+    prompt: agent === "custom" || teams ? String(b.prompt ?? "") : str("prompt"),
+    ...(teams && { teams }),
     t3: {
       provider: oneOf("t3.provider", t3.provider, PROVIDERS),
       model: str("t3.model", t3.model),
       runtimeMode: oneOf("t3.runtimeMode", t3.runtimeMode, RUNTIME_MODES),
+      useDefaults: t3.useDefaults === true,
     },
     ...(from && { importedFrom: { source: from.source, sourceId: from.sourceId, ...(from.needsSchedule && { needsSchedule: true }) } }),
   };
@@ -102,7 +116,7 @@ async function importItems(body) {
   const list = store.routines();
   const done = importedKeys();
   const taken = new Set(["new", ...list.map((r) => r.id)]);
-  const t3 = { provider: "claudeAgent", model: models().t3.claudeAgent[0], runtimeMode: "approval-required" };
+  const t3 = { ...taskConfig(), useDefaults: true };
   const created = [];
   for (const c of candidates) {
     const key = importKey(c.source, c.sourceId);
@@ -135,7 +149,7 @@ function models() {
     current = JSON.parse(readFileSync(MANIFEST, "utf8")).manifest.currentModels;
   } catch {}
   const t3 = Object.fromEntries(PROVIDERS.map((p) => [p, current[p]?.length ? current[p] : FALLBACK_MODELS[p]]));
-  return { agents: { claude: ["opus", "sonnet", "haiku", ...t3.claudeAgent], codex: t3.codex, custom: [] }, t3 };
+  return { agents: { claude: ["opus", "sonnet", "haiku", ...t3.claudeAgent], codex: t3.codex, custom: [] }, t3, defaultCwd: homedir() };
 }
 
 function routinesWithStatus() {
@@ -143,11 +157,14 @@ function routinesWithStatus() {
   const now = new Date();
   return store.routines().map((r) => {
     const last = runs.find((x) => x.routineId === r.id);
+    const completed = runs.filter((x) => x.routineId === r.id && ["done", "needs_input"].includes(x.state) && x.finishedAt && !x.items?.some((i) => i.key === "teams:access"))
+      .sort((a, b) => b.finishedAt.localeCompare(a.finishedAt))[0];
     let nextRun = null;
     try {
       if (r.enabled) nextRun = nextRuns(parseCron(r.schedule), now, 1)[0]?.toISOString() ?? null;
     } catch {}
-    return { ...r, lastRun: last ? { id: last.id, state: last.state, startedAt: last.startedAt, finishedAt: last.finishedAt ?? null } : null, nextRun };
+    return { ...r, lastRun: last ? { id: last.id, state: last.state, startedAt: last.startedAt, finishedAt: last.finishedAt ?? null } : null,
+      lastCompletedRun: completed ? { id: completed.id, finishedAt: completed.finishedAt } : null, nextRun };
   });
 }
 
@@ -165,7 +182,8 @@ async function inbox() {
     items: await withActions(run, items),
     threads: run.threads,
   }));
-  return { count: entries.length, entries: await Promise.all(entries) };
+  const resolved = await Promise.all(entries);
+  return { count: summaryLine(inboxModel(resolved))?.actionable ?? 0, entries: resolved };
 }
 
 // Done items keep their history but offer no actions.
@@ -254,6 +272,21 @@ function mustRoutine(id) {
 }
 
 const routes = [
+  ["GET", /^\/api\/settings$/, () => ({ ...settings(), detectedT3App: (() => { try { return resolveT3App(); } catch { return null; } })() })],
+  ["PUT", /^\/api\/settings$/, (_, body) => { try { return saveSettings(body); } catch (e) { throw new HttpError(400, e.message); } }],
+  ["POST", /^\/api\/settings\/check-t3$/, () => checkT3()],
+  ["POST", /^\/api\/settings\/test-notification$/, async () => {
+    if (!settings().desktopNotifications) throw new HttpError(400, "Enable and save desktop notifications first");
+    await notify("RoutineBar", "This is a test desktop notification from RoutineBar.");
+    return { ok: true };
+  }],
+  ["GET", /^\/api\/sessions\/([^/]+)$/, ([id]) => { try { return session(id); } catch (e) { throw new HttpError(404, e.message); } }],
+  ["POST", /^\/api\/sessions\/([^/]+)\/open$/, ([id]) => openSession(id)],
+  ["POST", /^\/api\/teams\/access$/, (_, body) => {
+    let teams;
+    try { teams = validateTeams(body?.teams); } catch (e) { throw new HttpError(400, e.message); }
+    return checkTeamsAccess(teams);
+  }],
   ["GET", /^\/api\/routines$/, () => routinesWithStatus()],
   ["GET", /^\/api\/models$/, () => models()],
   ["PUT", /^\/api\/routines\/([^/]+)$/, ([id], body) => (store.upsertRoutine(validateRoutine(id, body)), store.routine(id))],
@@ -343,6 +376,7 @@ const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url.pathname === "/") return send(200, readFileSync(INDEX), "text/html; charset=utf-8");
     if (req.method === "GET" && url.pathname === "/cron.mjs") return send(200, readFileSync(CRON_MODULE), "text/javascript; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/inbox-model.mjs") return send(200, readFileSync(new URL("../public/inbox-model.mjs", import.meta.url)), "text/javascript; charset=utf-8");
     for (const [method, re, handler] of routes) {
       const m = re.exec(url.pathname);
       if (m && req.method === method) return send(200, await handler(m.slice(1).map(decodeURIComponent), await readBody(req), url.searchParams));

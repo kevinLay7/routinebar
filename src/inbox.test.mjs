@@ -52,3 +52,12 @@ test("running runs never supersede the latest finished run", () => {
   const runs = [run("2026-10-15T10:05", "pr-reviews", "running", [], { finishedAt: undefined }), run("2026-10-15T10:00", "pr-reviews", "done", [prItem("Review PR 512")])];
   assert.deepEqual(titles(inboxRuns(runs, {})), [["2026-10-15T10:00", "done", ["Review PR 512"]]]);
 });
+
+test("a dismissed waiting PR returns when it becomes the user's review or action", () => {
+  const waiting = { ...prItem("Fix"), attention: "waiting" };
+  const dismissed = { "reviews:pr:acme/store#512": fingerprint(waiting) };
+  assert.deepEqual(inboxRuns([run("1", "reviews", "done", [waiting])], dismissed), []);
+  for (const attention of ["review", "action"]) {
+    assert.equal(inboxRuns([run("2", "reviews", "needs_input", [{ ...waiting, attention }])], dismissed)[0].items.length, 1);
+  }
+});

@@ -56,6 +56,17 @@ test("applicable actions per item, primary marked with *", async () => {
   assert.deepEqual(noRepo, [{ id: "move-to-t3", label: "Move to T3", needsConfirm: true, primary: false }]);
 });
 
+test("waiting PRs do not ask for review or make merge the primary action", async () => {
+  const item = { key: "pr:acme/app#1", kind: "needs_you", attention: "waiting", url: "https://github.com/acme/app/pull/1" };
+  for (const mine of [true, false]) {
+    const actions = await listActions(item, { routine, ref: parseKey(item.key), mine });
+    assert.equal(actions.find(a => a.primary)?.id, "open");
+    assert.equal(actions.some(a => ["review-in-t3", "approve"].includes(a.id)), false);
+  }
+  const review = await listActions({ ...item, attention: "review" }, { routine, ref: parseKey(item.key), mine: false });
+  assert.equal(review.find(a => a.primary)?.id, "review-in-t3");
+});
+
 test("merge runs gh pr merge with the default method, and blocks draft or closed PRs", async () => {
   const item = { key: "pr:acme/app#12", kind: "needs_you", title: "Feat" };
   const ctx = await contextFor(item, routine);
